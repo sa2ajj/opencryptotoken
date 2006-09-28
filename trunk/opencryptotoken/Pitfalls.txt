@@ -1,0 +1,67 @@
+(from PowerSwitch project)
+
+If something does not work as it should, please check the following list.
+It is compiled from the feedback we received so far.
+
+
+FIRMWARE:
+- If you use an ATMega or other device with internal RC oscillator, make sure
+  that you flash the fuse for the external crystal oscillator.
+- Make sure that all USB inputs (D+, D- and the interrupt) are configured as
+  inputs with no internal pullup resistor. You must write a "0" to the port
+  output bit and to the data direction bit of each input line.
+- Make sure that you have updated the defines in usbdrv.h to reflect your
+  pin assignments. D- must be bit 0 of a port.
+- Make usbdrv.o the first object in linking. The USB receive buffer must not
+  cross a 256 byte boundary of the RAM address space. Alternatively, you can
+  put the buffer in a separate segment and instruct the linker to order this
+  segment first. To verify the addresses assigned to the USB buffers use
+      avr-nm -n main.bin | grep usbRxBuf
+  and ignore the 0x800000 offset.
+- If you need a very long cable, try the define "USB_SAMPLE_EXACT". You may
+  be able to extend the cable range. The driver should work with the maximum
+  USB cable length without this define, though.
+
+
+HOST DRIVER:
+- On Linux you must be root in order to use libusb (unless you have configured
+  hotplug appropriately). The command line utility must therefore be executed
+  by root.
+- Our host software can be compiled on Windows using MinGW and libusb-win32.
+- libusb-win32 version 0.1.10.1 (others have not been tested) has a bug with
+  suspend mode. Once the PC was in suspend mode, the device is "lost".
+
+
+HARDWARE:
+- EMI: Our reference implementation is susceptible to EMI problems. We found
+  out that the chip performs a reset although the external reset pin does
+  not change level (checked with a DSO connected to reset and triggered by
+  USB reset). This may be a consequence of over-clocking (we had the AT90S2313
+  in stock and it just worked). We recommend EMI precautions in any case:
+  (1) Use the watchdog timer of the device, (2) generate an USB reset state
+  for an extended period of time after device reset (this is outside the USB
+  spec, but it works: the hub or host interprets it as disconnect). Otherwise
+  the host's and device's notion of the device-ID may get out of sync.
+- If you use the EEPROM, it is very likely that you need some kind of brownout
+  protection. A capacitor of several 100 microfarads in the supply is enough
+  to reliably cause brownout problems. See Atmel's Application Note AN180
+  for more information. Your local supplier's price table may be a better
+  selection guide for brownout protection chips, though...
+- Operating Voltage: OpenCryptoToken has been designed to operate at 3.5 V in
+  order to meet the data signal voltage specification. The circuit does
+  usually work without a regulator (directly powered by the 5 V from USB).
+  USB 1.1 even demands that all devices withstand exposure to the bus supply
+  voltage for an extended period of time. However, since these logic levels
+  violate the specification, they exceed the common mode range of some USB
+  I/O driver chips found in some hosts and hubs. We therefore recommend that
+  you either reduce the CPU's supply voltage or add zener diodes to USB D+ and
+  D- to clamp the voltage at 3.6 V.
+
+
+AVR DEVICES CONFIRMED TO WORK:
+OpenCryptoToken has been developed and tested on ATMega8, but will propably
+work on other better equiped chips. If you have built OpenCryptoToken on
+otheother chip, please drop us a note. 
+The following chips have been tested:
+
+  ATMega8
