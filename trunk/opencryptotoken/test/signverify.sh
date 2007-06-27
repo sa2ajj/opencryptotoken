@@ -1,4 +1,4 @@
 #!/bin/bash
 set -v
-echo test | openssl smime -sign -signer cert.pem -engine oct -keyform E >signed.txt
-cat signed.txt | openssl smime -verify -signer cert.pem -CAfile cert.pem 
+echo test | openssl smime -nointern -noverify -sign -signer mrk.pem -CAfile cacert.pem -engine oct -keyform E >signed.txt
+cat signed.txt | openssl smime -verify -signer mrk.pem -CAfile cacert.pem 

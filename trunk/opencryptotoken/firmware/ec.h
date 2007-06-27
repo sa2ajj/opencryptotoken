@@ -26,7 +26,7 @@ typedef struct {
   bignum_t S;
 } ecdsa_sig_t;
 
-extern void ec_mul(ec_point_t *x, bignum_t *k, ec_point_t *y);
+extern void ec_mul(ec_point_t *x, ec_point_t *b, bignum_t *k);
 extern unsigned char ec_on_curve(ec_point_t *x);
 extern void ec_normalize(ec_point_t *x);
 extern int ec_test();
@@ -41,6 +41,7 @@ extern void inv_mod(bignum_t *a, bignum_t *z, bignum_t *mod);
 extern unsigned char bin_sub_2N(bigbignum_t *x, bigbignum_t *y, bigbignum_t *z);
 extern unsigned char bin_shiftr_2N(bigbignum_t *x, bigbignum_t *z);
 extern unsigned char bin_shiftl(bignum_t *x, bignum_t *z);
+extern unsigned char bin_shiftr(bignum_t *x, bignum_t *z);
 
 extern void bin_mul(bignum_t *a,bignum_t *b,bigbignum_t *z);
 extern unsigned char bin_add(bignum_t *a,bignum_t *b,bignum_t *c);
@@ -53,7 +54,8 @@ extern bignum_t field_order;
 extern ec_point_t G;
 extern unsigned char entrophy[32];
 extern bignum_t private_key;
+extern int ecdsa_sign(ecdsa_sig_t *ecsig,unsigned char *dgst,int dgst_len);
 
-extern int ecdsa_sign(unsigned char *dgst,int dgst_len, ecdsa_sig_t *ecsig);
-
+extern void usbAppIdle();
+extern void usbAppInit();
 #endif

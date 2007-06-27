@@ -167,8 +167,8 @@ int                 nBytes;
         exit(1);
     }
     usb_init();
-    if(usbOpenDevice(&handle, USBDEV_SHARED_VENDOR, "its.sed.pl", USBDEV_SHARED_PRODUCT, "AvrCryptoToken") != 0){
-        fprintf(stderr, "Could not find USB device \"AvrCryptoToken\" with vid=0x%x pid=0x%x\n", USBDEV_SHARED_VENDOR, USBDEV_SHARED_PRODUCT);
+    if(usbOpenDevice(&handle, USBDEV_SHARED_VENDOR, "its.sed.pl", USBDEV_SHARED_PRODUCT, "OpenCryptoToken") != 0){
+        fprintf(stderr, "Could not find USB device \"OpenCryptoToken\" with vid=0x%x pid=0x%x\n", USBDEV_SHARED_VENDOR, USBDEV_SHARED_PRODUCT);
         exit(1);
     }
 /* We have searched all devices on all busses for our USB device above. Now
@@ -182,6 +182,7 @@ int                 nBytes;
         
         int nBytes = usb_control_msg(handle, USB_TYPE_VENDOR | USB_RECIP_DEVICE, AVRCMD_MULT, 0, 0, (char *)buf, n, 5000);
         n=0;
+        usleep(3000000);
         while((nBytes=usb_control_msg(handle, USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_ENDPOINT_IN, AVRCMD_GETRESULT, 0, 0, (char *)buf, 256, 5000))==0 && n++<25)
           usleep(200000);
         if(nBytes==3*N) {
@@ -192,26 +193,40 @@ int                 nBytes;
         } else {
           fprintf(stderr,"mult timeout\n");
         }
+    } else if(strcmp(argv[1], "multres") == 0){
+        unsigned char buf[256];
+        memset(buf,0,256);
+        nBytes=usb_control_msg(handle, USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_ENDPOINT_IN, AVRCMD_GETRESULT, 0, 0, (char *)buf, 256, 5000);
+        if(nBytes==3*N) {
+          fprintf(stdout,"X:"); hex_print(stdout,buf,N);
+          fprintf(stdout,"\nY:"); hex_print(stdout,buf+N,N);
+          fprintf(stdout,"\nZ:"); hex_print(stdout,buf+2*N,N);
+          fprintf(stdout,"\n");
+        } else {
+          fprintf(stderr,"err:%d\n",nBytes);
+        }
     } else if(strcmp(argv[1], "sign") == 0) {
         nBytes = usb_control_msg(handle, USB_TYPE_VENDOR | USB_RECIP_DEVICE, AVRCMD_SIGN, 0, 0, argv[2], strlen(argv[2]), 5000);
         int n=0;
         unsigned char buf[256];
         memset(buf,0,256);
         ecdsa_sig_t sig;
-        while((nBytes=usb_control_msg(handle, USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_ENDPOINT_IN, AVRCMD_GETRESULT, 0, 0, (char *)&sig, sizeof(ecdsa_sig_t), 5000))==0 && n++<25)
-          usleep(200000);
+        usleep(3*1000000);
+;        while((nBytes=usb_control_msg(handle, USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_ENDPOINT_IN, AVRCMD_GETRESULT, 0, 0, (char *)&sig, sizeof(ecdsa_sig_t), 5000))==0 && n++<25)
+;          usleep(200000);
         if(nBytes==sizeof(ecdsa_sig_t)) {
           fprintf(stdout,"R:"); hex_print(stdout,sig.R.value,N);
           fprintf(stdout,"\nS:"); hex_print(stdout,sig.S.value,N);
           fprintf(stdout,"\n");
         } else {
-          fprintf(stderr,"sign timeout\n");
+          fprintf(stderr,"sign timeout, nb:%d\n",nBytes);
         }
-    } else if(strcmp(argv[1], "rnd") == 0){
+    } else if(strcmp(argv[1], "rnd") == 0) {
       unsigned char buf[32];
       nBytes=usb_control_msg(handle, USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_ENDPOINT_IN, AVRCMD_GETRND, 0, 0, (char *)buf, 32, 5000);
-      hex_print(stdout,buf,nBytes);
-      fprintf(stdout,"\n");
+      write(1,buf,nBytes);
+//      hex_print(stdout,buf,nBytes);
+//      fprintf(stdout,"\n");
     } else if(strcmp(argv[1], "test") == 0){
         int i, v, r;
 /* The test consists of writing 1000 random numbers to the device and checking
