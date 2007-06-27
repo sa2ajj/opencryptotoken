@@ -31,6 +31,9 @@
 	.global bin_shiftl
 	.type 	bin_shiftl, @function
 
+	.global bin_shiftr
+	.type 	bin_shiftr, @function
+
 	.global inv_mod
 	.type 	inv_mod, @function
 
@@ -57,11 +60,11 @@
 #define ptrh  r25
 
 
-memcpy:
+memcpy_:
 	ld acc,X+
 	st Y+,acc
 	dec i
-	brne memcpy 
+	brne memcpy_ 
 	ret
 /*
 ;r2,r3 - a
@@ -91,7 +94,7 @@ tmul:
 	add r8,r0
 	adc r9,r1
 	ret
-*/
+
 
 psqr:
 	movw YL,XL
@@ -107,7 +110,10 @@ pmul:	push ptrl
 	in ptrh,SPH
 	sbiw ptrl,2*N
 	sbiw ptrl,N
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	adiw ptrl,1
 
@@ -124,11 +130,15 @@ pmul:	push ptrl
 
 	adiw ptrl,N
 	adiw ptrl,2*N-1
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	pop ptrh
 	pop ptrl
 	ret
+*/
 
 bin_sqr_:	
 	movw YL,XL
@@ -281,7 +291,7 @@ nexti2:
 	st Z+,r7
 	ret
 
-
+/*
 p192reduction:
 	movw pal,ptrl
 ;	ldi pal,lo8(result)
@@ -358,7 +368,10 @@ red3:
 
 	adiw ptrl,N
 	adiw ptrl,2*N-1
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 
 	pop pbh
@@ -368,6 +381,7 @@ red3:
 	pop ptrh
 	pop ptrl
 	ret
+*/
 
 bin_add:
 	push YL
@@ -437,6 +451,17 @@ bshr1:
 	clr r24
 	rol r24
 	ret
+
+bin_shiftr:
+	movw XL,r24
+	movw ZL,r22
+	ldi r20,N
+	clc
+	adiw XL,N
+	clc
+	adiw ZL,N
+	clc
+	rjmp bshr1
 
 bin_shiftl:
 	movw XL,r24
@@ -579,7 +604,10 @@ inv_:
 ;	sbiw ptrl,2*N
 ;	sbiw ptrl,2*N
 
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	adiw ptrl,1
 	push ZL
@@ -587,7 +615,7 @@ inv_:
 	movw YL,ptrl
 	adiw YL,u
 	ldi i,N
-	rcall memcpy
+	rcall memcpy_
 ;	ld  XL,Y
 ;	ld  XH,Y+1
 	ror r0
@@ -602,7 +630,7 @@ inv_:
 	movw YL,ptrl
 	adiw YL,v
 	ldi i,N
-	rcall memcpy
+	rcall memcpy_
 
 	ldi i,N
 	movw XL,ptrl
@@ -625,7 +653,11 @@ pinv0:
 	st X,i
 ;koniec inicjalizacji, g³ówna pêtelka
 pinv1:
-	
+	push ptrl
+	push ptrh
+;	rcall usbPoll_
+	pop ptrh
+	pop ptrl
 	movw XL,ptrl
 	adiw XL,u
 	ld i,X
@@ -771,13 +803,16 @@ pinv7:
 	subi XL,lo8(-C)
 	sbci XH,hi8(-C)
 	ldi i,N
-	rcall memcpy
+	rcall memcpy_
 
 	subi ptrl,lo8(-4*N+1)
 	sbci ptrh,hi8(-4*N+1)
 ;	adiw ptrl,2*N-1
 ;	adiw ptrl,2*N
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	pop YL
 	pop YH
@@ -851,7 +886,7 @@ bsub1:
 ;ret: Z=1 - ok
 
 ;y^2=x^3-3x+b
-
+/*
 ec_on_curve:
 	movw XL,r24
 
@@ -879,13 +914,16 @@ _ec_on_curve:
 	in ptrh,SPH
 	sbiw ptrl,2*N
 	sbiw ptrl,N
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	adiw ptrl,1
 	
 	movw YL,ptrl
 	ldi i,2*N
-	rcall memcpy
+	rcall memcpy_
 
 	movw XL,ptrl 
 	movw YL,ptrl
@@ -927,7 +965,10 @@ _ec_on_curve:
 	in r0,SREG					
 	adiw ptrl,2*N-1
 	adiw ptrl,N
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	clr r24
 	out SREG,r0
@@ -955,10 +996,11 @@ not_on_curve:
 	pop r2
 	clr r1 			//for C
 	ret		
-		
+*/	
+	
 ; X - punkt we wspó³rzêdnych jakobianowych
 ec_is_inf:
-	adiw XL,2*N
+	adiw XL,1*N	;jest 1(Y), bylo 2*N - chyba zle (Z)
 p_is_zero:
 	ldi i,N
 ecisinf1:
@@ -981,6 +1023,8 @@ pzero1:
 	brne pzero1
 	ret
 
+/*
+
 ; X - src
 ; Z - dst
 
@@ -997,6 +1041,9 @@ eccp:
 	cp XH,YH
 	brne eccp
 	ret
+*/
+
+/*
 
 ; X - arg1
 ; Y - arg2
@@ -1017,7 +1064,10 @@ ec_add:
 	in ptrh,SPH
 	subi ptrl,lo8(7*N)
 	sbci ptrh,hi8(7*N)
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	adiw ptrl,1
 
@@ -1272,7 +1322,10 @@ ecadd5:
 ecaddex:
 	subi ptrl,lo8(-7*N+1)
 	sbci ptrh,hi8(-7*N+1)
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 
 	pop pch
@@ -1285,6 +1338,8 @@ ecaddex:
 	pop ptrl
 
 	ret
+
+
 ; X - argument
 ; Z - resultat
 
@@ -1300,7 +1355,10 @@ ec_dbl:
 	in ptrh,SPH
 	sbiw ptrl,2*N
 	sbiw ptrl,2*N
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	adiw ptrl,1
 
@@ -1314,7 +1372,7 @@ ec_dbl:
 	adiw XL,2*N
 	movw YL,pbl
 	adiw YL,2*N
-	rcall memcpy	;Zr=Za=0
+	rcall memcpy_	;Zr=Za=0
 
 	rjmp ecdbl2
 
@@ -1432,7 +1490,10 @@ ecdbl1:
 ecdbl2:
 	adiw ptrl,2*N-1
 	adiw ptrl,2*N
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	pop pbh
 	pop pbl
@@ -1442,7 +1503,9 @@ ecdbl2:
 	pop ptrl
 	ret		
 
-ec_normalize:
+
+
+ec_normalize_:
 
 	push r2
 	push r3
@@ -1468,7 +1531,10 @@ ec_normalize:
 	in ptrl,SPL
 	in ptrh,SPH
 	sbiw ptrl,2*N
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	adiw ptrl,1
 	
@@ -1478,6 +1544,10 @@ ec_normalize:
 	adiw XL,2*N		;z
 	movw ZL,ptrl
 	rcall pinv		;n0=z_1
+;	movw YL,ZL
+;	ldi i,N
+;	rcall memcpy_	
+
 
 	movw XL,ptrl
 	movw ZL,ptrl
@@ -1514,7 +1584,10 @@ nrm:
 	brne nrm
 
 	adiw ptrl,2*N-1
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 
 	pop YH
@@ -1538,6 +1611,8 @@ nrm:
 	clr r1
 
 	ret
+
+
 
 ec_mul:
 	push r2
@@ -1574,7 +1649,10 @@ _ec_mul:
 	in ptrh,SPH
 	subi ptrl,lo8(4*N)
 	sbci ptrh,hi8(4*N)
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
 	adiw ptrl,1
 
@@ -1586,7 +1664,7 @@ _ec_mul:
 	movw XL,pbl
 	movw YL,ptrl
 	ldi i,N
-	rcall memcpy		;n0=k
+	rcall memcpy_		;n0=k
 
 	movw XL,pal
 	movw ZL,ptrl
@@ -1603,9 +1681,10 @@ ecmul1:
 	push ptrh
 	push pcl
 	push pch
-	clr r1
-	wdr
-	rcall usbPoll
+;	clr r1
+;	wdr
+;	rcall usbPoll_
+
 	pop pch
 	pop pcl
 	pop ptrh
@@ -1641,9 +1720,12 @@ ecmulex:
 
 	subi ptrl,lo8(-4*N+1)
 	sbci ptrh,hi8(-4*N+1)
+	in r0,SREG
+	cli
 	out SPL,ptrl
+	out SREG,r0
 	out SPH,ptrh
-
+*/
 popregs:
 	pop YH
 	pop YL
@@ -1714,8 +1796,8 @@ inv_mod:
 	push YL
 	push YH
 
-	movw XL,r24
-	movw ZL,r22
+	movw ZL,r24
+	movw XL,r22
 	movw YL,r20
 	rcall inv_
 	rjmp popregs

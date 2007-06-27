@@ -572,11 +572,11 @@ IMPLEMENT_DYNAMIC_BIND_FN ( bind_fn )
 static EVP_PKEY *hwcrhk_load_privkey(ENGINE *eng, const char *key_id,
 	UI_METHOD *ui_method, void *callback_data)
 	{
-	char *hexpub="04a649dc5ea5bc290f6fa686098de0"
-                    "9b002ddffb7bb49b84d7fe352ef987"
-                    "ef39e5bbae1f90948d6ec8ef3e6fa5"
-                    "3b8d3fae";
-
+	char *hexpub=
+                    "04ec13cccae129c34b511de7c4531b"
+                    "d2c63081aa49a58f51d4ccde964479"
+                    "822a03b2ef7745ae4ea5074cbb58f216bacfe7"
+	;                                                            
 	fprintf(stderr,"start loading key\n");
 	EVP_PKEY *res = NULL;
 	EC_KEY *eckey=EC_KEY_new_by_curve_name(NID_X9_62_prime192v1);

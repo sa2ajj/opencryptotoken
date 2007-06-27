@@ -7,19 +7,23 @@
 # License: Proprietary, free under certain conditions. See Documentation.
 # This Revision: $Id: Makefile 147 2006-03-01 17:33:03Z cs $
 
+LDFLAGS += -Wl,--script=avr4.x -Wl,-Tdata,0x8000a0
+
+
 #SERIAL = `echo /dev/tty.KeySerial*`
 #UISP = uisp -dprog=avr910 -dserial=$(SERIAL) -dpart=auto
-UISP = uisp -dprog=dapa
+#UISP = uisp -dprog=dapa
+UISP=uisp -dprog=dapa -dlpt=/dev/.static/dev/parport0
 # The two lines above are for "uisp" and the AVR910 serial programmer connected
 # to a Keyspan USB to serial converter to a Mac running Mac OS X.
 # Choose your favorite programmer and interface.
 
 #COMPILE = avr-gcc -Wall -Os -Iusbdrv -I. -mmcu=at90s2313 #-DDEBUG_LEVEL=2
-COMPILE = avr-gcc -Wall -Os -Iusbdrv -I. -mmcu=atmega8 #-DDEBUG_LEVEL=2
+COMPILE = avr-gcc -Wall -Os -Iusbdrv -I. -mmcu=atmega8 -g #-DDEBUG_LEVEL=2
 # NEVER compile the final product with debugging! Any debug output will
 # distort timing so that the specs can't be met.
 
-OBJECTS = usbdrv/usbdrv.o usbdrv/usbdrvasm.o usbdrv/oddebug.o main.o ecasm.o ec.o
+OBJECTS = main.o ecasm.o ec.o fs.o appvect.o
 # Note that we link usbdrv.o first! This is required for correct alignment of
 # driver-internal global variables!
 
@@ -43,6 +47,8 @@ all:	main.hex
 flash:	all
 	$(UISP) --erase --upload --verify if=main.hex
 
+usbflash:	all
+	../../avrusbboot.2006-06-25/software/avrusbboot main.hex
 
 # Fuse low byte:
 # 0xef = 1 1 1 0   1 1 1 1
@@ -70,7 +76,7 @@ clean:
 
 # file targets:
 main.bin:	$(OBJECTS)
-	$(COMPILE) -o main.bin $(OBJECTS)
+	$(COMPILE) -o main.bin $(OBJECTS) $(LDFLAGS)
 
 main.hex:	main.bin
 	rm -f main.hex main.eep.hex
