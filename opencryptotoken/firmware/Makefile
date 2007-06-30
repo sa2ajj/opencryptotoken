@@ -19,7 +19,7 @@ UISP=uisp -dprog=dapa -dlpt=/dev/.static/dev/parport0
 # Choose your favorite programmer and interface.
 
 #COMPILE = avr-gcc -Wall -Os -Iusbdrv -I. -mmcu=at90s2313 #-DDEBUG_LEVEL=2
-COMPILE = avr-gcc -Wall -Os -Iusbdrv -I. -mmcu=atmega8 -g #-DDEBUG_LEVEL=2
+COMPILE = avr-gcc -Wall -Os -I../../avrusbboot/firmware/usbdrv/ -I. -mmcu=atmega8 -g #-DDEBUG_LEVEL=2
 # NEVER compile the final product with debugging! Any debug output will
 # distort timing so that the specs can't be met.
 
@@ -48,7 +48,7 @@ flash:	all
 	$(UISP) --erase --upload --verify if=main.hex
 
 usbflash:	all
-	../../avrusbboot.2006-06-25/software/avrusbboot main.hex
+	../../avrusbboot/software/avrusbboot main.hex
 
 # Fuse low byte:
 # 0xef = 1 1 1 0   1 1 1 1
