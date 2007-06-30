@@ -9,7 +9,7 @@
 
 # Concigure the following definitions according to your system.
 
-CC              = gcc-4.0
+CC              = gcc
 LIBUSB_CONFIG   = libusb-config
 # Make sure that libusb-config is in the search path or specify a full path.
 # On Windows, there is no libusb-config and you must configure the options
