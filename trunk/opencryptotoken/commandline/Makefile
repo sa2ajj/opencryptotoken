@@ -18,7 +18,7 @@ CFLAGS          = `$(LIBUSB_CONFIG) --cflags` -O -Wall
 #CFLAGS          = -I/usr/local/libusb/include
 # On Windows replace `$(LIBUSB_CONFIG) --cflags` with appropriate "-I..."
 # option to ensure that usb.h is found
-LIBS            = `$(LIBUSB_CONFIG) --libs`
+LIBS            = `$(LIBUSB_CONFIG) --libs` -lssl -lcrypto
 #LIBS            = `$(LIBUSB_CONFIG) --libs` -framework CoreFoundation
 # You may need "-framework CoreFoundation" on Mac OS X and Darwin.
 #LIBS            = -L/usr/local/libusb/lib/gcc -lusb
