@@ -55,10 +55,13 @@ unsigned int P_G[] PROGMEM = {
 //};
 
 // new test priv key
+/*
 unsigned char P_private_key[] PROGMEM = {
 0x0c,0x41,0x60,0x93,0x45,0x41,0x5c,0xe1,0x83,0x47,0xb2,0xe1,
 0x00,0xca,0x0d,0x3b,0x4f,0x2d,0xce,0x48,0xef,0x18,0x95,0x79
 };
+*/
+extern unsigned char P_private_key[] PROGMEM;
 
 void ec_init() {
 	memcpy_P(field_prime.value,P_field_prime,N);
@@ -165,7 +168,7 @@ void fast192reduction(bignum_t *result, bigbignum_t *bn) {
 
 
 void field_mul(bignum_t *r,bignum_t *a, bignum_t *b) {
-	bigbignum_t bn;
+	bigbignum_t bn; //2*N
 	bin_mul(a,b,&bn);
 	fast192reduction(r,&bn);
 }
@@ -178,7 +181,7 @@ void field_sqr(bignum_t *r,bignum_t *a) {
 //#define field_sqr(r,a) field_mul(r,a,a)
 
 void ec_normalize(ec_point_t *point) {
-	bignum_t n0,n1;
+	bignum_t n0,n1; //2*N
 	inv_mod(&n0,&point->Z,&field_prime);	// n0=Z^-1
 	field_sqr(&n1,&n0);			// n1=Z^-2
 	field_mul(&point->X,&point->X,&n1);	// X*=n1
@@ -195,7 +198,7 @@ void ec_normalize(ec_point_t *point) {
 
 // a*=2
 void ec_dbl(ec_point_t *a) {
-	bignum_t S,M,YY,ZZ,T;
+	bignum_t S,M,YY,ZZ,T; //5*N
 	if(ecisinf(a)) return;
 	field_sqr(&YY,&a->Y);
 	field_sqr(&ZZ,&a->Z);
@@ -238,10 +241,11 @@ void ec_dbl(ec_point_t *a) {
 
 
 //a+=b;
-void ec_add(ec_point_t *a,ec_point_t *b) {
-	bignum_t u1,u2,s1,s2,t1,t2,t3;
-	if(ecisinf(b)) return;
-	if(ecisinf(a)) {*a=*b; return;}
+
+uchar ec_add_(ec_point_t *a,ec_point_t *b) {
+	bignum_t u1,u2,s1,s2,t1,t2; //6*N
+	if(ecisinf(b)) return 0;
+	if(ecisinf(a)) {*a=*b; return 0;}
 	
 	field_sqr(&t1,&b->Z);
 	field_mul(&u1,&a->X,&t1);	//u1=X1*Z2^2
@@ -260,12 +264,12 @@ void ec_add(ec_point_t *a,ec_point_t *b) {
 
 	if(is_zero(&u2)) {
 		if(is_zero(&s2)) {
-			ec_dbl(a);
-			return;
+//			ec_dbl(a);
+			return 1; //dubluj
 		} else {
 			//inf
 			memset(a,0,sizeof(*a));
-			return;
+			return 0;
 		}
 	}
 
@@ -274,32 +278,38 @@ void ec_add(ec_point_t *a,ec_point_t *b) {
 
 	field_sqr(&t1,&H);	//t1 = H^2
 	field_mul(&t2,&H,&t1);  //t2 = H^3
-	field_mul(&t3,&u1,&t1);	//t3=u1*h^2
+	field_mul(&t1,&u1,&t1);	//t3=u1*h^2
 	
 	field_sqr(&a->X,&R);
 	field_sub(&a->X,&a->X,&t2);
 
-	field_sub(&a->X,&a->X,&t3);  
-	field_sub(&a->X,&a->X,&t3);  //X3=R^2 - H^3 - 2*U1*H^2
+	field_sub(&a->X,&a->X,&t1);  
+	field_sub(&a->X,&a->X,&t1);  //X3=R^2 - H^3 - 2*U1*H^2
 
-	field_sub(&a->Y,&t3,&a->X);
+	field_sub(&a->Y,&t1,&a->X);
 	field_mul(&a->Y,&a->Y,&R);
 
-	field_mul(&t3,&s1,&t2);
-	field_sub(&a->Y,&a->Y,&t3);
+	field_mul(&t1,&s1,&t2);
+	field_sub(&a->Y,&a->Y,&t1);
 
 	field_mul(&a->Z,&a->Z,&b->Z);
 	field_mul(&a->Z,&a->Z,&H);
+        return 0;
 }
 #undef H
 #undef R
 
+//void ec_add(ec_point_t *a,ec_point_t *b) {
+//  if(ec_add_(a,b)) ec_dbl(a);
+//}
+
+
 void ec_mul(ec_point_t *result, ec_point_t *point,bignum_t *ak) {
-	ec_point_t tmp=*point;
-	bignum_t k=*ak;
+	ec_point_t tmp=*point; //3*N
+	bignum_t k=*ak; //N
 	memset(result,0,sizeof(*result));	//result=inf
 	while(!is_zero(&k)) {
-		if(k.value[0]&1) ec_add(result,&tmp);
+		if(k.value[0]&1) if(ec_add_(result,&tmp)) ec_dbl(result);
 		ec_dbl(&tmp);
 		bin_shiftr(&k,&k);
 	}
@@ -311,10 +321,10 @@ int ecdsa_sign_setup(bignum_t *r, bignum_t *kinv) {
 } 
 
 int ecdsa_sign(ecdsa_sig_t *ecsig,unsigned char *dgst,int dgst_len) {
-	bignum_t k,dg;
-	bigbignum_t r;
+	bignum_t k,dg; //2*N
+	bigbignum_t r; //2*N
 	
-	ec_point_t ptmp;
+	ec_point_t ptmp; //3*N
 	int i;
 // mala szansa (bardzo mala :) ze k bedzie 0 albo wieksze od field_prime
 // na razie olewamy sprawdzanie

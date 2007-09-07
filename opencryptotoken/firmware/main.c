@@ -11,32 +11,38 @@
 #define F_CPU 12000000UL  // 12 MHz
 #include <avr/io.h>
 #include <string.h>
-#include <avr/signal.h>
+//#include <avr/signal.h>
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
 #include <avr/wdt.h>
-#include <avr/delay.h>
+#include <util/delay.h>
 
 #include "usbdrv.h"
 #include "oddebug.h"
 #include "ec.h"
+
+//#include "cert.h"
+#include "file.h"
 
 #define FLASHDATA ((__data_load_end+SPM_PAGESIZE-1)/SPM_PAGESIZE)*SPM_PAGESIZE;
 
 static void (*usbPollPtr)(void);
 
 static uchar input[N];
-static uchar result[3*N];
- 
+static uchar result[AVR_FILE_BUF_SIZE]; //min 3*N
+
 static unsigned int input_length;
 static uchar *write_ptr;
 
 static uchar do_it,result_length,cmd;
+static file_entry_t current_file;
+
 unsigned char entrophy[32];
 
 void	usbPoll_() {
   usbPollPtr();
 }
+
 
 uchar   usbAppFunctionSetup(uchar data[8],uchar **usbMsgPtr)
 {
@@ -45,7 +51,9 @@ uchar   usbAppFunctionSetup(uchar data[8],uchar **usbMsgPtr)
     if(cmd == 0){       /* ECHO */
         result[0] = data[2];
         result[1] = data[3];
-        return 2;
+        result[2] = data[4];
+        result[3] = data[5];
+        return 4;
     } else if(cmd == AVRCMD_MULT || cmd==AVRCMD_SIGN) {
       result_length=0;
       input_length=((usbRequest_t *)data)->wLength.word;
@@ -54,9 +62,24 @@ uchar   usbAppFunctionSetup(uchar data[8],uchar **usbMsgPtr)
       return 0xff;
     } else if(cmd == AVRCMD_GETRESULT) {
       return result_length;
-    } else if(cmd == 6) {
+    } else if(cmd == AVRCMD_GETRND) {
       *usbMsgPtr=entrophy;
       return 32;
+    } else if(cmd == AVRCMD_SELECT_FILE) {
+      result_length=0;
+      memcpy_P(&current_file,flash_files,sizeof(file_entry_t));
+      return 0;
+    } else if(cmd == AVRCMD_READ_BINARY) {
+      uint16_t offs=*(uint16_t *)(data+2);
+      uint16_t len=*(uint16_t *)(data+4);
+      if(offs>=current_file.len) 
+        return 0;
+      if(len>AVR_FILE_BUF_SIZE)
+        len=AVR_FILE_BUF_SIZE;
+      if(offs+len>current_file.len) 
+        len=current_file.len-offs;
+      memcpy_P(result,current_file.ptr+offs,len);
+      return len;
     }
     return 0;
 }
@@ -167,5 +190,6 @@ void usbAppIdle() {
   do_rnd();
 };
 
-void main() {
+int main() {
+  return 0;
 }

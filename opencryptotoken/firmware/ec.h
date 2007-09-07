@@ -1,8 +1,12 @@
 #define N 24
-#define AVRCMD_MULT 4
-#define AVRCMD_GETRESULT 5
-#define AVRCMD_GETRND 6
-#define AVRCMD_SIGN 8
+#define AVRCMD_SELECT_FILE 4
+#define AVRCMD_SIGN 5
+#define AVRCMD_MULT 6
+#define AVRCMD_READ_BINARY 0x81
+#define AVRCMD_GETRESULT 0x82
+#define AVRCMD_GETRND 0x83
+
+#define AVR_FILE_BUF_SIZE 128
 
 #ifndef __ASSEMBLER__
 

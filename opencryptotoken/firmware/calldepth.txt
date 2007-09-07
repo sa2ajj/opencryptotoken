@@ -1,0 +1,14 @@
+ecdsa_sign: 7*N
+  ec_mul: 4*N
+    ec_add: 6*N
+      field_sqr: 0
+      field_mul: 2*N
+        bin_mul: 20
+        fast_deduction: N
+          field_add
+      ec_dbl: 5*N
+        field_mul: 2*N
+        
+    ec_dbl: 5*N
+    
+  ec_normalize:

@@ -23,7 +23,7 @@ COMPILE = avr-gcc -Wall -Os -I../../avrusbboot/firmware/usbdrv/ -I. -mmcu=atmega
 # NEVER compile the final product with debugging! Any debug output will
 # distort timing so that the specs can't be met.
 
-OBJECTS = main.o ecasm.o ec.o fs.o appvect.o
+OBJECTS = main.o ecasm.o ec.o appvect.o privkey.o file.o
 # Note that we link usbdrv.o first! This is required for correct alignment of
 # driver-internal global variables!
 
@@ -90,3 +90,18 @@ disasm:	main.bin
 
 cpp:
 	$(COMPILE) -E main.c
+
+cert.pem: ecc-secp192r1-client.pfx
+	openssl pkcs12 -in ecc-secp192r1-client.pfx -out cert.pem -passin pass:password -passout pass:password
+
+cert.der: cert.pem
+	openssl x509 -in cert.pem -outform DER -out cert.der
+
+privkey.c: cert.pem
+	echo "#include <avr/pgmspace.h>">privkey.c
+	result="";for i in `openssl ec -passin pass:password -in cert.pem -text|grep priv -A 2 |grep "^ " |tr -d ' \n' |tr ':' ' '`; do result="0x$$i,$$result"; done; echo "unsigned char P_private_key[] PROGMEM = { $$result };">>privkey.c
+
+cert.h: cert.pem
+	tab=`openssl x509 -in cert.pem -C|grep _certificate -A 1000|grep "^0x"`;echo "unsigned char P_certificate[] PROGMEM = { $$tab };" >>cert.h
+
+main.o: cert.h main.c
