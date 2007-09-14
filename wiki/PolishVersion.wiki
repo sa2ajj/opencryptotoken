@@ -1,18 +1,17 @@
-PolishVersion
-USB crypto token based on cheap Atmel's AVR AtMega8 using strong ECC public/private key cryptography...
+OpenCryptoToken - Token USB oparty na tanim i popularnym mikrokontrolerze jednoukładowym Atmel'a z rodziny AVR - AtMega8, implementujący kryptografię Krzywych Eliptycznych ECC
+Jest to projekt z 
 
-===Features===
-  * On-token private key operations (ECDSA Sign) with acceptable speed (~2seconds/sign for prime192v1 NIST curve)
-  * chip hardware (few $) - all crypto operations and USB support even done in software 
-  * easy uC programming (initial uC programming via Atmel's SPI interface, further firmware updates via USB)
-  * working openct driver, opensc ECC patch, firefox pkcs11 support (via opensc pkcs11 plugin) - client certificate login tested
+===Cechy===
+  * Wszelkie operacje na kluczu prywatnym wykonywane przez token, z akceptowalną prędkością (ok. 2 sekundy/podpis ECDSA dla 192 bitowej krzywej prime192v1 NIST)
+  * bardzo prosty układ, tanie podzespoły - koszt elementów to kilkanaście PLN (mikrokontroler, kwarc, kilka kondensatorów i rezystorów)
+  * łatwe programowanie kontrolera - pierwsze programowanie można wykonać przez szeregowy programator SPI (port równoległy + kilka rezystorów), późniejsze zmiany można wprowadzać przez USB
+  * opracowany driver do openct, patch ECC do opensc, działający plugin pkcs11 do firefox'a - generalnie można logować się po www za pomocą certyfikatu klienta
 
 ===TODO===
-
-  * better hardware RNG (needed for ECDSA Sign and onboard key generation) - I have primitive one (single capacitor :), but i think it shoud be better.
-  * onboard private key generation
-  * PIN support
-  * better pkcs11/15 compilance
-  * multiple key/certificate support
-  * a lot of testing and bug hunting
-  * more application support (mail signing in thunderbird, kerberos PKINIT support etc)
+  * lepszy sprzętowy generator liczb losowych (potrzebny do generowania sygnatur ECDSA i generowania nowego klucza). Mam prymitywny generator (na jednym kondensatorze :), ale pewnie da się to zrobić lepiej
+  * generowanie klucza na tokenie (na razie klucz prywatny jest zapisywany podczas programowania token'a)
+  * obsługa PIN
+  * Wsparcie dla wielu kluczy/certyfikatów ? (za bardzo nie można poszaleć - w 8kB trzeba się zmieścić z kodem i kluczami/certyfikatami)
+  * wsparcie ze strony aplikacji (podpisywanie/szyfrowanie poczty w thunderbirdzie, wsparcie dla PKINIT w kerberosie (heimdal), itd)
+  * więcej testów....
+ 
