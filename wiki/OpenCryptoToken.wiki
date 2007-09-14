@@ -22,3 +22,4 @@ Open w nazwie oznacza, że zarówno firmware, jak i specyfikacja hardware jest o
  
  
  
+ 
