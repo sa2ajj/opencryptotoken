@@ -3,6 +3,8 @@ Open w nazwie oznacza, że zarówno firmware, jak i specyfikacja hardware jest o
 
 Projekt bazuje na [http://www.obdev.at/products/avrusb/index.html Firmware-Only USB]
 
+[http://groups.google.com/group/opencryptotoken Grupa (lista) dyskusyjna] 
+
 Dlaczego ECC, a nie popularne RSA? ECC zostało wybrane ze względu na dużo mniejsze wymagania obliczeniowe/pamięciowe - mikrokontroler taki jak AtMega8 (8kB pamięci programu, 1kB ramu (sic!), taktowanie 12Mhz) po prostu nie dał by sobie rady z RSA, natomiast z ECC idzie mu całkiem sprawnie...
 
 ===Cechy===
@@ -20,6 +22,7 @@ Dlaczego ECC, a nie popularne RSA? ECC zostało wybrane ze względu na dużo mni
   * Wsparcie dla wielu kluczy/certyfikatów ? (za bardzo nie można poszaleć - na AtMega8 w 8kB trzeba się zmieścić z kodem i kluczami/certyfikatami, ale oczywiście można wykorzystać układ z większą pamięcią)
   * wsparcie ze strony aplikacji (podpisywanie/szyfrowanie poczty w thunderbirdzie, wsparcie dla PKINIT w kerberosie (heimdal), itd)
   * więcej testów....
+ 
  
  
  
