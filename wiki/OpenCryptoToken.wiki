@@ -1,6 +1,8 @@
 OpenCryptoToken - Token USB oparty na tanim i popularnym mikrokontrolerze jednoukładowym Atmel'a z rodziny AVR - AtMega8, implementujący kryptografię Krzywych Eliptycznych ECC. 
 Open w nazwie oznacza, że zarówno firmware, jak i specyfikacja hardware jest otwarta, dostępna na wolnej licencji. Projekt rozwijany jest na razie tylko na linuksie, ale porty pod inne systemy są jak najbardziej możliwe.
 
+[http://opencryptotoken.googlecode.com/svn/trunk/opencryptotoken/circuit/oct3d.png]
+
 Projekt bazuje na [http://www.obdev.at/products/avrusb/index.html Firmware-Only USB]
 
 [http://groups.google.com/group/opencryptotoken Grupa (lista) dyskusyjna] 
@@ -22,6 +24,8 @@ Dlaczego ECC, a nie popularne RSA? ECC zostało wybrane ze względu na dużo mni
   * Wsparcie dla wielu kluczy/certyfikatów ? (za bardzo nie można poszaleć - na AtMega8 w 8kB trzeba się zmieścić z kodem i kluczami/certyfikatami, ale oczywiście można wykorzystać układ z większą pamięcią)
   * wsparcie ze strony aplikacji (podpisywanie/szyfrowanie poczty w thunderbirdzie, wsparcie dla PKINIT w kerberosie (heimdal), itd)
   * więcej testów....
+ 
+ 
  
  
  
