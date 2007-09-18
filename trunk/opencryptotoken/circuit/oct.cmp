@@ -1,0 +1,94 @@
+Cmp-Mod V01 Created by Cvpcb (2006-08-28) date = 18/9/2007-20:04:36
+
+BeginCmp
+TimeStamp = 46ED5904;
+Reference = C1;
+ValeurCmp = 27p;
+IdModule  = C1;
+EndCmp
+
+BeginCmp
+TimeStamp = 46ED5924;
+Reference = C2;
+ValeurCmp = 27p;
+IdModule  = C1;
+EndCmp
+
+BeginCmp
+TimeStamp = 46ED6EEB;
+Reference = C3;
+ValeurCmp = 100n;
+IdModule  = C2;
+EndCmp
+
+BeginCmp
+TimeStamp = 46F00DD6;
+Reference = C5;
+ValeurCmp = C;
+IdModule  = C2;
+EndCmp
+
+BeginCmp
+TimeStamp = 46ED71DB;
+Reference = D1;
+ValeurCmp = 3v6;
+IdModule  = D3;
+EndCmp
+
+BeginCmp
+TimeStamp = 46ED7229;
+Reference = D2;
+ValeurCmp = 3v6;
+IdModule  = D3;
+EndCmp
+
+BeginCmp
+TimeStamp = 46F00ABA;
+Reference = D3;
+ValeurCmp = LED;
+IdModule  = LEDV;
+EndCmp
+
+BeginCmp
+TimeStamp = 46ED580E;
+Reference = I1;
+ValeurCmp = ATMEGA8;
+IdModule  = TQFP32;
+EndCmp
+
+BeginCmp
+TimeStamp = 46ED6602;
+Reference = P1;
+ValeurCmp = CONN_4;
+IdModule  = USB-A;
+EndCmp
+
+BeginCmp
+TimeStamp = 46EFE6C0;
+Reference = P2;
+ValeurCmp = CONN_3X2;
+IdModule  = pin_array_3x2;
+EndCmp
+
+BeginCmp
+TimeStamp = 46F00AE4;
+Reference = R1;
+ValeurCmp = R;
+IdModule  = R3;
+EndCmp
+
+BeginCmp
+TimeStamp = 46F026A9;
+Reference = SW1;
+ValeurCmp = SW_PUSH;
+IdModule  = SIL-2;
+EndCmp
+
+BeginCmp
+TimeStamp = 46ED7938;
+Reference = X1;
+ValeurCmp = 12Mhz;
+IdModule  = HC-18UV;
+EndCmp
+
+EndListe
