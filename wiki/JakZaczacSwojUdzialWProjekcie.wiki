@@ -20,7 +20,9 @@ apt-get install gcc-avr binutils-avr avr-libc
 
 jeśli chcesz mieć możliwość początkowego zaprogramowania procesora programator SPI, lub chcesz podłubać w kodzie bootloadera, zainstaluj także program uisp. [http://www.captain.at/electronics/atmel-programmer/ Tutaj] jest opisany sposób podłączenia programatora DAPA - Direct AVR Parallel Access, który składa się z dwóch rezystorów podłączonych do portu równoległego. Uwaga - numery nóżek tam podane odnoszą się  do AtMega16 w obudowie DIP-40.
 
-1. Po tej operacji powinno działać już całe środowisko uruchomieniowe, czyli powinieneś móc skompilować firmware (katalog avrusbboot/firmware i opencryptotoken/firmware)
+1. Po tej operacji powinno działać już całe środowisko uruchomieniowe, czyli powinieneś móc skompilować firmware (katalog avrusbboot/firmware i opencryptotoken/firmware) za pomocą `make`
+ 
+ 
  
  
  
