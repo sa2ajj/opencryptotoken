@@ -17,7 +17,7 @@ Dlaczego ECC, a nie popularne RSA? ECC zostało wybrane ze względu na dużo mni
   * opracowany driver do openct, patch ECC do opensc, działający plugin pkcs11 do firefox'a - generalnie można już logować się za pomocą certyfikatu klienta
 
 ===Jak zacząć===
-  * [[JakZaczacSwojUdzialWProjekcie Jakie pakiety]] i skąd można je pobrać
+  * [JakZaczacSwojUdzialWProjekcie Jakie pakiety] i skąd można je pobrać
   * W jaki sposób skompilować program
   * Jak wygenerować klucze
   * Jak testować
@@ -30,6 +30,7 @@ Dlaczego ECC, a nie popularne RSA? ECC zostało wybrane ze względu na dużo mni
   * Wsparcie dla wielu kluczy/certyfikatów ? (za bardzo nie można poszaleć - na AtMega8 w 8kB trzeba się zmieścić z kodem i kluczami/certyfikatami, ale oczywiście można wykorzystać układ z większą pamięcią)
   * wsparcie ze strony aplikacji (podpisywanie/szyfrowanie poczty w thunderbirdzie, wsparcie dla PKINIT w kerberosie (heimdal), itd)
   * więcej testów....
+ 
  
  
  
