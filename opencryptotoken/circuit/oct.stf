@@ -1,6 +1,6 @@
 comp = "C1" module = "C1"
 comp = "C2" module = "C1"
-comp = "C3" module = "C1"
+comp = "C3" module = "C2"
 comp = "C5" module = "C2"
 comp = "D1" module = "D3"
 comp = "D2" module = "D3"

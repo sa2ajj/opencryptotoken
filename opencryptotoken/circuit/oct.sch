@@ -5,7 +5,7 @@ EELAYER END
 $Descr A4 11700 8267
 Sheet 1 1
 Title "OpenCryptoToken"
-Date "18 sep 2007"
+Date "20 sep 2007"
 Rev ""
 Comp ""
 Comment1 ""
@@ -13,6 +13,54 @@ Comment2 ""
 Comment3 ""
 Comment4 ""
 $EndDescr
+Wire Wire Line
+	5800 4950 5700 4950
+Wire Wire Line
+	5700 4950 5700 4200
+Wire Wire Line
+	5700 4200 5650 4200
+Wire Wire Line
+	5800 4850 5750 4850
+Wire Wire Line
+	5750 4850 5750 4100
+Wire Wire Line
+	5750 4100 5650 4100
+Wire Wire Line
+	5800 4750 5800 4000
+Wire Wire Line
+	5800 4000 5650 4000
+Connection ~ 5650 4100
+Connection ~ 5650 4200
+Connection ~ 5800 4750
+Connection ~ 5800 4850
+Connection ~ 5800 4950
+$Comp
+L CONN_1 P5
+U 1 1 46F2755D
+P 5950 4950
+F 0 "P5" H 6030 4950 40  0000 C C
+F 1 "PC2" H 5900 4990 30  0001 C C
+	1    5950 4950
+	1    0    0    -1  
+$EndComp
+$Comp
+L CONN_1 P4
+U 1 1 46F27552
+P 5950 4850
+F 0 "P4" H 6030 4850 40  0000 C C
+F 1 "PC1" H 5900 4890 30  0001 C C
+	1    5950 4850
+	1    0    0    -1  
+$EndComp
+$Comp
+L CONN_1 P3
+U 1 1 46F27542
+P 5950 4750
+F 0 "P3" H 6030 4750 40  0000 C C
+F 1 "PC0" H 5900 4790 30  0001 C C
+	1    5950 4750
+	1    0    0    -1  
+$EndComp
 Connection ~ 6400 3600
 Wire Wire Line
 	2500 4100 2300 4100
@@ -29,7 +77,7 @@ L SW_PUSH SW1
 U 1 1 46F026A9
 P 2800 4100
 F 0 "SW1" H 2950 4210 50  0000 C C
-F 1 "SW_PUSH" H 2800 4020 50  0000 C C
+F 1 "ACT" H 2800 4020 50  0000 C C
 	1    2800 4100
 	1    0    0    -1  
 $EndComp
@@ -73,10 +121,10 @@ Wire Wire Line
 Wire Wire Line
 	6150 3700 5650 3700
 $Comp
-L GND #PWR6
+L GND #PWR5
 U 1 1 46F00EBB
 P 5900 4350
-F 0 "#PWR6" H 5900 4350 30  0001 C C
+F 0 "#PWR5" H 5900 4350 30  0001 C C
 F 1 "GND" H 5900 4280 30  0001 C C
 	1    5900 4350
 	1    0    0    -1  
@@ -144,14 +192,14 @@ $EndComp
 Wire Wire Line
 	3250 3200 3150 3200
 Wire Wire Line
-	3150 3200 3150 3100
+	3150 3100 3150 3200
 Wire Wire Line
-	3150 3100 2300 3100
+	2300 3100 3150 3100
 $Comp
-L GND #PWR5
+L GND #PWR4
 U 1 1 46EFE777
 P 6900 3350
-F 0 "#PWR5" H 6900 3350 30  0001 C C
+F 0 "#PWR4" H 6900 3350 30  0001 C C
 F 1 "GND" H 6900 3280 30  0001 C C
 	1    6900 3350
 	1    0    0    -1  
@@ -236,7 +284,7 @@ F 1 "GND" H 6850 2680 30  0001 C C
 	1    0    0    -1  
 $EndComp
 Wire Wire Line
-	6900 3600 6900 5400
+	6900 5400 6900 3600
 $Comp
 L C C3
 U 1 1 46ED6EEB
@@ -248,7 +296,7 @@ F 1 "100n" H 6900 2200 50  0000 L C
 $EndComp
 Connection ~ 4650 5400
 Wire Wire Line
-	6900 5400 4250 5400
+	4250 5400 6900 5400
 Connection ~ 4150 2200
 Text Label 3000 3100 0    60   ~
 D+
