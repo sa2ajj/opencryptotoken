@@ -1,0 +1,2428 @@
+Index: src/pkcs11/framework-pkcs15.c
+===================================================================
+--- src/pkcs11/framework-pkcs15.c	(wersja 3277)
++++ src/pkcs11/framework-pkcs15.c	(kopia robocza)
+@@ -54,7 +54,7 @@
+ 	}                                       \
+ 	attr->ulValueLen = size;
+ 
+-#define MAX_OBJECTS	64
++#define MAX_OBJECTS	256
+ struct pkcs15_fw_data {
+ 	struct sc_pkcs15_card *		p15_card;
+ 	struct pkcs15_any_object *	objects[MAX_OBJECTS];
+@@ -105,8 +105,8 @@
+ #define pub_cert		base.related_cert
+ 
+ #define __p15_type(obj)		(((obj) && (obj)->p15_object)? ((obj)->p15_object->type) : (unsigned int)-1)
+-#define is_privkey(obj)		(__p15_type(obj) == SC_PKCS15_TYPE_PRKEY_RSA)
+-#define is_pubkey(obj)		(__p15_type(obj) == SC_PKCS15_TYPE_PUBKEY_RSA)
++#define is_privkey(obj)		((__p15_type(obj) == SC_PKCS15_TYPE_PRKEY_RSA) || (__p15_type(obj) == SC_PKCS15_TYPE_PRKEY_EC))
++#define is_pubkey(obj)		((__p15_type(obj) == SC_PKCS15_TYPE_PUBKEY_RSA) || (__p15_type(obj) == SC_PKCS15_TYPE_PUBKEY_EC))
+ #define is_cert(obj)		(__p15_type(obj) == SC_PKCS15_TYPE_CERT_X509)
+ 
+ struct pkcs15_data_object {
+@@ -143,6 +143,7 @@
+ static void	add_pins_to_keycache(struct sc_pkcs11_card *p11card,
+ 				struct sc_pkcs11_slot *slot);
+ static int	reselect_app_df(sc_pkcs15_card_t *p15card);
++static CK_RV pkcs15_pubkey_get_attribute(struct sc_pkcs11_session *session, void *object, CK_ATTRIBUTE_PTR attr);
+ 
+ /* PKCS#15 Framework */
+ 
+@@ -272,7 +273,8 @@
+ 		}
+ 		if ((fw_data->objects[ii]->p15_object->type != SC_PKCS15_TYPE_PUBKEY) && 
+ 		    (fw_data->objects[ii]->p15_object->type != SC_PKCS15_TYPE_PUBKEY_RSA) &&
+-		    (fw_data->objects[ii]->p15_object->type != SC_PKCS15_TYPE_PUBKEY_DSA)) {
++		    (fw_data->objects[ii]->p15_object->type != SC_PKCS15_TYPE_PUBKEY_DSA) &&
++		    (fw_data->objects[ii]->p15_object->type != SC_PKCS15_TYPE_PUBKEY_EC)) {
+ 			ii++;
+ 			continue;
+ 		}
+@@ -630,6 +632,7 @@
+ 
+ 	switch (__p15_type(obj)) {
+ 	case SC_PKCS15_TYPE_PRKEY_RSA:
++	case SC_PKCS15_TYPE_PRKEY_EC:
+ 		if (obj->related_cert == NULL)
+ 			pkcs15_add_object(slot, (struct pkcs15_any_object *) obj->related_pubkey, NULL);
+ 		pkcs15_add_object(slot, (struct pkcs15_any_object *) obj->related_cert, NULL);
+@@ -733,18 +736,32 @@
+ 
+ 	rv = pkcs15_create_pkcs11_objects(fw_data,
+ 				SC_PKCS15_TYPE_PRKEY_RSA,
+-				"private key",
++				"RSA private key",
+ 				__pkcs15_create_prkey_object);
+  	if (rv < 0)
+  		return sc_to_cryptoki_error(rv, reader);
+ 
++	rv = pkcs15_create_pkcs11_objects(fw_data,
++				SC_PKCS15_TYPE_PRKEY_EC,
++				"EC private key",
++				__pkcs15_create_prkey_object);
++ 	if (rv < 0)
++ 		return sc_to_cryptoki_error(rv, reader);
++
+  	rv = pkcs15_create_pkcs11_objects(fw_data,
+ 				SC_PKCS15_TYPE_PUBKEY_RSA,
+-				"public key",
++				"RSA public key",
+ 				__pkcs15_create_pubkey_object);
+  	if (rv < 0)
+  		return sc_to_cryptoki_error(rv, reader);
+ 
++ 	rv = pkcs15_create_pkcs11_objects(fw_data,
++				SC_PKCS15_TYPE_PUBKEY_EC,
++				"EC public key",
++				__pkcs15_create_pubkey_object);
++ 	if (rv < 0)
++ 		return sc_to_cryptoki_error(rv, reader);
++
+ 	rv = pkcs15_create_pkcs11_objects(fw_data,
+ 				SC_PKCS15_TYPE_CERT_X509,
+ 				"certificate",
+@@ -1050,9 +1067,9 @@
+ 	rv = attr_find(pTemplate, ulCount, CKA_KEY_TYPE, &key_type, NULL);
+ 	if (rv != CKR_OK)
+ 		return rv;
+-	if (key_type != CKK_RSA)
++	if (key_type != CKK_RSA && key_type!=CKK_EC)
+ 		return CKR_ATTRIBUTE_VALUE_INVALID;
+-	args.key.algorithm = SC_ALGORITHM_RSA;
++	args.key.algorithm = (key_type==CKK_RSA) ? SC_ALGORITHM_RSA : SC_ALGORITHM_EC;
+ 	rsa = &args.key.u.rsa;
+ 
+ 	rv = CKR_OK;
+@@ -1103,7 +1120,7 @@
+ 	 || !rsa->p.len || !rsa->q.len) {
+ 		rv = CKR_TEMPLATE_INCOMPLETE;
+ 		goto out;
+-	}
++	}	
+ 
+ 	rc = sc_pkcs15init_store_private_key(fw_data->p15_card, profile, &args, &key_obj);
+ 	if (rc < 0) {
+@@ -1133,6 +1150,7 @@
+ 	struct sc_pkcs15_pin_info *pin;
+ 	CK_KEY_TYPE	key_type;
+ 	struct sc_pkcs15_pubkey_rsa *rsa;
++	struct sc_pkcs15_pubkey_ec *ec;
+ 	int rc, rv;
+ 
+ 	memset(&args, 0, sizeof(args));
+@@ -1146,10 +1164,11 @@
+ 	rv = attr_find(pTemplate, ulCount, CKA_KEY_TYPE, &key_type, NULL);
+ 	if (rv != CKR_OK)
+ 		return rv;
+-	if (key_type != CKK_RSA)
++	if (key_type != CKK_RSA && key_type != CKK_EC)
+ 		return CKR_ATTRIBUTE_VALUE_INVALID;
+-	args.key.algorithm = SC_ALGORITHM_RSA;
++	args.key.algorithm = (key_type==CKK_RSA) ? SC_ALGORITHM_RSA : SC_ALGORITHM_EC;
+ 	rsa = &args.key.u.rsa;
++	ec = &args.key.u.ec;
+ 
+ 	rv = CKR_OK;
+ 	while (ulCount--) {
+@@ -1176,6 +1195,10 @@
+ 			bn = &rsa->modulus; break;
+ 		case CKA_PUBLIC_EXPONENT:
+ 			bn = &rsa->exponent; break;
++		case CKA_ECDSA_PARAMS:
++			bn = &ec->params; break;
++		case CKA_EC_POINT:
++			bn = &ec->point; break;
+ 		default:
+ 			/* ignore unknown attrs, or flag error? */
+ 			continue;
+@@ -1189,10 +1212,11 @@
+ 		}
+ 	}
+ 
+-	if (!rsa->modulus.len || !rsa->exponent.len) {
++	if ((key_type==CKK_RSA && (!rsa->modulus.len || !rsa->exponent.len)) ||
++	    (key_type==CKK_EC && (!ec->point.len || !ec->params.len))) {
+ 		rv = CKR_TEMPLATE_INCOMPLETE;
+ 		goto out;
+-	}
++	}	
+ 
+ 	rc = sc_pkcs15init_store_public_key(fw_data->p15_card, profile, &args, &key_obj);
+ 	if (rc < 0) {
+@@ -1836,6 +1860,14 @@
+ 		}
+ 		return asn1_sequence_wrapper(cert->cert_data->issuer,
+ 				 cert->cert_data->issuer_len, attr);
++	case CKA_EC_PARAMS:
++		sc_debug(context,"retrieving EC_PARAMS from cert");
++		if(!cert->cert_pubkey) {
++			sc_error(context,"no related pubkey");
++			return CKR_ATTRIBUTE_TYPE_INVALID;
++		}
++		return pkcs15_pubkey_get_attribute(session,cert->cert_pubkey,attr);
++
+ 	default:
+ 		return CKR_ATTRIBUTE_TYPE_INVALID;
+ 	}
+@@ -1973,7 +2005,17 @@
+ 		break;
+ 	case CKA_KEY_TYPE:
+ 		check_attribute_buffer(attr, sizeof(CK_KEY_TYPE));
+-		*(CK_KEY_TYPE*)attr->pValue = CKK_RSA;
++		switch(__p15_type((struct pkcs15_any_object *)object)) {
++			case SC_PKCS15_TYPE_PRKEY_EC:
++				*(CK_KEY_TYPE*)attr->pValue =CKK_EC;
++			break;
++			case SC_PKCS15_TYPE_PRKEY_RSA:
++				*(CK_KEY_TYPE*)attr->pValue =CKK_RSA;
++			break;
++			default:
++				return CKR_ATTRIBUTE_TYPE_INVALID;
++			break;
++		}
+ 		break;
+ 	case CKA_ID:
+ 		check_attribute_buffer(attr, prkey->prv_info->id.len);
+@@ -1996,6 +2038,13 @@
+ 		for (usage = 0; prkey; prkey = prkey->prv_next)
+ 			usage |= prkey->prv_info->usage;
+ 		return get_usage_bit(usage, attr);
++	case CKA_EC_PARAMS:
++		sc_debug(context,"retrieving EC_PARAMS");
++		if(!prkey->prv_pubkey) {
++			sc_error(context,"no related pubkey");
++			return CKR_ATTRIBUTE_TYPE_INVALID;
++		}
++		return pkcs15_pubkey_get_attribute(session,prkey->prv_pubkey,attr);
+ 	case CKA_MODULUS:
+ 		return get_modulus(key, attr);
+ 	/* XXX: this should be removed sometimes as a private key has no
+@@ -2074,6 +2123,9 @@
+ 	case CKM_RSA_X_509:
+ 		flags = SC_ALGORITHM_RSA_RAW;
+ 		break;
++	case CKM_ECDSA:
++		flags = 0;
++		break;
+ 	default:
+ 		return CKR_MECHANISM_INVALID;
+ 	}
+@@ -2269,6 +2321,7 @@
+ 		case CKA_MODULUS_BITS:
+ 		case CKA_VALUE:
+ 		case CKA_PUBLIC_EXPONENT:
++		case CKA_EC_PARAMS:
+ 			if (pubkey->pub_data == NULL) 
+ 				/* FIXME: check the return value? */
+ 				check_cert_data_read(fw_data, cert);
+@@ -2320,7 +2373,17 @@
+ 		break;
+ 	case CKA_KEY_TYPE:
+ 		check_attribute_buffer(attr, sizeof(CK_KEY_TYPE));
+-		*(CK_KEY_TYPE*)attr->pValue = CKK_RSA;
++		switch(__p15_type((struct pkcs15_any_object *)object)) {
++			case SC_PKCS15_TYPE_PUBKEY_EC:
++				*(CK_KEY_TYPE*)attr->pValue =CKK_EC;
++			break;
++			case SC_PKCS15_TYPE_PUBKEY_RSA:
++				*(CK_KEY_TYPE*)attr->pValue =CKK_RSA;
++			break;
++			default:
++				return CKR_ATTRIBUTE_TYPE_INVALID;
++			break;
++		}
+ 		break;
+ 	case CKA_ID:
+ 		if (pubkey->pub_info) {
+@@ -2370,6 +2433,16 @@
+ 			memcpy(attr->pValue, cert->cert_data->data, cert->cert_data->data_len);
+ 		}
+ 		break;
++	case CKA_EC_PARAMS: {
++		struct sc_ec_params *p=pubkey->pub_data->alg_id.params;
++		if(!p) {
++			sc_error(context,"hmm, no pubkey params?");
++			return CKR_ATTRIBUTE_TYPE_INVALID;		
++		}
++		check_attribute_buffer(attr,p->len);
++		memcpy(attr->pValue,p->rawparams,p->len);
++		return CKR_OK;
++	}
+ 	default:
+ 		return CKR_ATTRIBUTE_TYPE_INVALID;
+ 	}
+@@ -2777,11 +2850,13 @@
+ {
+ 	sc_card_t *card = p11card->card;
+ 	sc_algorithm_info_t *alg_info;
+-	CK_MECHANISM_INFO mech_info;
++	CK_MECHANISM_INFO mech_info,ec_mech_info;
+ 	sc_pkcs11_mechanism_type_t *mt;
+ 	unsigned int num;
+-	int rc, flags = 0;
++	int rc, flags = 0,ec_flags=0;
+ 
++	memset(&mech_info,0,sizeof(mech_info));
++
+ 	/* Register generic mechanisms */
+ 	sc_pkcs11_register_generic_mechanisms(p11card);
+ 
+@@ -2792,6 +2867,14 @@
+ 	mech_info.ulMinKeySize = ~0;
+ 	mech_info.ulMaxKeySize = 0;
+ 
++	ec_mech_info=mech_info;
++	ec_mech_info.flags = CKF_HW | CKF_SIGN;
++#ifdef HAVE_OPENSSL
++	ec_mech_info.flags |= CKF_VERIFY;
++#endif
++	ec_mech_info.ulMinKeySize=~0;
++	ec_mech_info.ulMaxKeySize=0;
++	
+ 	/* For now, we just OR all the algorithm specific
+ 	 * flags, based on the assumption that cards don't
+ 	 * support different modes for different key sizes
+@@ -2800,18 +2883,69 @@
+ 	alg_info = card->algorithms;
+ 	while (num--) {
+ 		if (alg_info->algorithm == SC_ALGORITHM_RSA)   {
+-		if (alg_info->key_length < mech_info.ulMinKeySize)
+-			mech_info.ulMinKeySize = alg_info->key_length;
+-		if (alg_info->key_length > mech_info.ulMaxKeySize)
+-			mech_info.ulMaxKeySize = alg_info->key_length;
++			if (alg_info->key_length < mech_info.ulMinKeySize)
++				mech_info.ulMinKeySize = alg_info->key_length;
++			if (alg_info->key_length > mech_info.ulMaxKeySize)
++				mech_info.ulMaxKeySize = alg_info->key_length;
++			flags |= alg_info->flags;
++		} else if(alg_info->algorithm == SC_ALGORITHM_EC) {
++			if (alg_info->key_length < ec_mech_info.ulMinKeySize)
++				ec_mech_info.ulMinKeySize = alg_info->key_length;
++			if (alg_info->key_length > ec_mech_info.ulMaxKeySize)
++				ec_mech_info.ulMaxKeySize = alg_info->key_length;
++			ec_flags |= alg_info->flags;
+ 
+-		flags |= alg_info->flags;
+ 		}
+ 		
+ 		alg_info++;
+ 	}
+ 
++	if(ec_flags) {
++
++		if(ec_flags & SC_ALGORITHM_EC_F_P)
++			ec_mech_info.flags|=CKF_EC_F_P;
++		if(ec_flags & SC_ALGORITHM_EC_F_2M)
++			ec_mech_info.flags|=CKF_EC_F_2M;
++		if(ec_flags & SC_ALGORITHM_EC_ECPARAMETERS)
++			ec_mech_info.flags|=CKF_EC_ECPARAMETERS;
++		if(ec_flags & SC_ALGORITHM_EC_NAMEDCURVE)
++			ec_mech_info.flags|=CKF_EC_NAMEDCURVE;
++		if(ec_flags & SC_ALGORITHM_EC_UNCOMPRESS)
++			ec_mech_info.flags|=CKF_EC_UNCOMPRESS;
++		if(ec_flags & SC_ALGORITHM_EC_COMPRESS)
++			ec_mech_info.flags|=CKF_EC_COMPRESS;
++		mt = sc_pkcs11_new_fw_mechanism(CKM_ECDSA,&ec_mech_info,CKK_EC,NULL);
++		rc = sc_pkcs11_register_mechanism(p11card, mt);
++		if(rc != CKR_OK) 
++			return rc;
++
++#if 0
++		memset(&ec_mech_info,0,sizeof(ec_mech_info));
++		ec_mech_info.flags = CKF_GENERATE_KEY_PAIR;
++		mt = sc_pkcs11_new_fw_mechanism(CKM_EC_KEY_PAIR_GEN,
++					&ec_mech_info, CKK_EC, NULL);
++		rc = sc_pkcs11_register_mechanism(p11card, mt);
++		if (rc != CKR_OK)
++			return rc;
++
++		mt = sc_pkcs11_new_fw_mechanism(CKM_ECDSA_SHA1,&ec_mech_info,CKK_EC,NULL);
++		rc = sc_pkcs11_register_mechanism(p11card, mt);
++		if(rc != CKR_OK) 
++			return rc;
++
++		mt = sc_pkcs11_new_fw_mechanism(CKM_ECDH1_DERIVE,&ec_mech_info,CKK_EC,NULL);
++		rc = sc_pkcs11_register_mechanism(p11card, mt);
++		if(rc != CKR_OK) 
++			return rc;
++		mt = sc_pkcs11_new_fw_mechanism(CKM_ECDH1_COFACTOR_DERIVE,&ec_mech_info,CKK_EC,NULL);
++		rc = sc_pkcs11_register_mechanism(p11card, mt);
++		if(rc != CKR_OK) 
++			return rc;
++#endif
++	}
++
+ 	/* Check if we support raw RSA */
++
+ 	if (flags & SC_ALGORITHM_RSA_RAW) {
+ 		mt = sc_pkcs11_new_fw_mechanism(CKM_RSA_X_509,
+ 					&mech_info, CKK_RSA, NULL);
+Index: src/pkcs11/mechanism.c
+===================================================================
+--- src/pkcs11/mechanism.c	(wersja 3277)
++++ src/pkcs11/mechanism.c	(kopia robocza)
+@@ -7,6 +7,9 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include "sc-pkcs11.h"
++#ifdef HAVE_OPENSSL
++#include <openssl/ec.h>
++#endif
+ 
+ /* Also used for verification data */
+ struct hash_signature_info {
+@@ -422,20 +425,21 @@
+ 				pSignature, pulSignatureLen);
+ }
+ 
++extern int sc_ecparams_keybits(unsigned char *data,int len);
++
+ static CK_RV
+ sc_pkcs11_signature_size(sc_pkcs11_operation_t *operation, CK_ULONG_PTR pLength)
+ {
+ 	struct sc_pkcs11_object *key;
+ 	CK_ATTRIBUTE attr = { CKA_MODULUS_BITS, pLength, sizeof(*pLength) };
+ 	CK_RV rv;
+-
+ 	key = ((struct signature_data *) operation->priv_data)->key;
+ 	rv = key->ops->get_attribute(operation->session, key, &attr);
+-
+ 	/* convert bits to bytes */
+-	if (rv == CKR_OK)
++	if (rv == CKR_OK) {
+ 		*pLength = (*pLength + 7) / 8;
+-
++		if(operation->type->key_type==CKK_EC) *pLength*=2;
++	}
+ 	return rv;
+ }
+ 
+Index: src/pkcs11/pkcs11.h
+===================================================================
+--- src/pkcs11/pkcs11.h	(wersja 3277)
++++ src/pkcs11/pkcs11.h	(kopia robocza)
+@@ -703,6 +703,14 @@
+ #define CKF_WRAP		(1 << 17)
+ #define CKF_UNWRAP		(1 << 18)
+ #define CKF_DERIVE		(1 << 19)
++
++#define CKF_EC_F_P             0x00100000
++#define CKF_EC_F_2M            0x00200000
++#define CKF_EC_ECPARAMETERS    0x00400000
++#define CKF_EC_NAMEDCURVE      0x00800000
++#define CKF_EC_UNCOMPRESS      0x01000000
++#define CKF_EC_COMPRESS        0x02000000
++
+ #define CKF_EXTENSION		((unsigned long) (1 << 31))
+ 
+ 
+Index: src/pkcs11/sc-pkcs11.h
+===================================================================
+--- src/pkcs11/sc-pkcs11.h	(wersja 3277)
++++ src/pkcs11/sc-pkcs11.h	(kopia robocza)
+@@ -60,7 +60,7 @@
+ extern "C" {
+ #endif
+ 
+-#define SC_PKCS11_MAX_VIRTUAL_SLOTS	8
++#define SC_PKCS11_MAX_VIRTUAL_SLOTS	1
+ #define SC_PKCS11_DEF_SLOTS_PER_CARD	4
+ #define SC_PKCS11_MAX_READERS           SC_MAX_READERS
+ 
+Index: src/pkcs11/openssl.c
+===================================================================
+--- src/pkcs11/openssl.c	(wersja 3277)
++++ src/pkcs11/openssl.c	(kopia robocza)
+@@ -13,6 +13,8 @@
+ #include <openssl/rand.h>
+ #include <openssl/rsa.h>
+ #include <openssl/opensslv.h>
++#include <openssl/ecdsa.h>
++#include <openssl/x509.h>
+ 
+ static CK_RV	sc_pkcs11_openssl_md_init(sc_pkcs11_operation_t *);
+ static CK_RV	sc_pkcs11_openssl_md_update(sc_pkcs11_operation_t *,
+@@ -237,10 +239,14 @@
+ 	CK_RV rv = CKR_GENERAL_ERROR;
+ 	EVP_PKEY *pkey;
+ 
+-	pkey = d2i_PublicKey(EVP_PKEY_RSA, NULL, &pubkey, pubkey_len);
+-	if (pkey == NULL)
++	if(mech!=CKM_ECDSA)
++		pkey = d2i_PublicKey(EVP_PKEY_RSA, NULL, &pubkey, pubkey_len);
++	else
++		pkey = d2i_PUBKEY(0, &pubkey, pubkey_len);
++	if (pkey == NULL) {
++		sc_debug(context,"key decoding error\n");
+ 		return CKR_GENERAL_ERROR;
+-		
++	}		
+ 
+ 	if (md != NULL) {
+ 		EVP_MD_CTX *md_ctx = DIGEST_CTX(md);
+@@ -257,6 +263,27 @@
+ 		}
+ 	}
+ 	else {
++		if(mech==CKM_ECDSA) {
++			ECDSA_SIG sig;
++			EC_KEY *eckey=EVP_PKEY_get1_EC_KEY(pkey);
++			EVP_PKEY_free(pkey);
++			if(!eckey) 
++				return CKR_DEVICE_MEMORY;
++			if(signat_len&1)
++				return CKR_GENERAL_ERROR;
++			sig.r=BN_bin2bn(signat,signat_len/2,0);
++			sig.s=BN_bin2bn(signat+signat_len/2,signat_len/2,0);
++			res=0;
++			if(sig.r && sig.s)
++				res=ECDSA_do_verify(data,data_len,&sig,eckey);
++			if(sig.r) BN_free(sig.r);
++			if(sig.s) BN_free(sig.s);
++			if (res == 1)
++				return CKR_OK;
++			else if (res == 0)
++				return CKR_SIGNATURE_INVALID;
++			return CKR_GENERAL_ERROR;
++		}
+ 		RSA *rsa;
+ 		unsigned char *rsa_out = NULL, pad;
+ 		int rsa_outlen = 0;
+@@ -301,4 +328,5 @@
+ 
+ 	return rv;
+ }
++
+ #endif
+Index: src/pkcs15init/pkcs15-lib.c
+===================================================================
+--- src/pkcs15init/pkcs15-lib.c	(wersja 3277)
++++ src/pkcs15init/pkcs15-lib.c	(kopia robocza)
+@@ -1,3 +1,4 @@
++
+ /*
+  * Initialize Cards according to PKCS#15.
+  *
+@@ -155,6 +156,7 @@
+ 	{ "cyberflex", (void *) sc_pkcs15init_get_cyberflex_ops },
+ 	{ "cardos", (void *) sc_pkcs15init_get_cardos_ops },
+ 	{ "etoken", (void *) sc_pkcs15init_get_cardos_ops }, /* legacy */
++	{ "oct", (void *) sc_pkcs15init_get_oct_ops },
+ 	{ "jcop", (void *) sc_pkcs15init_get_jcop_ops },
+ 	{ "starcos", (void *) sc_pkcs15init_get_starcos_ops },
+ 	{ "oberthur", (void *) sc_pkcs15init_get_oberthur_ops },
+@@ -1572,6 +1574,22 @@
+ 	return 1;
+ }
+ 
++static int sc_ecparams_keybits(unsigned char *data,int len) {
++//  d2i_ECPKParameters segfaults, we are using _bio version instead
++	int rv=-1;
++	EC_GROUP *g=0;
++	BIO *bio=BIO_new_mem_buf(data,len);
++	if(bio) {		  
++		g=d2i_ECPKParameters_bio(bio,0);
++		BIO_free(bio);
++	}
++	if(g) {
++		rv=EC_GROUP_get_degree(g);
++		EC_GROUP_free(g);
++	}
++	return rv;
++}
++
+ /*
+  * Store a public key
+  */
+@@ -1605,6 +1623,9 @@
+ 		keybits = sc_pkcs15init_keybits(&key.u.dsa.q);
+ 		type = SC_PKCS15_TYPE_PUBKEY_DSA; break;
+ #endif
++	case SC_ALGORITHM_EC:
++		keybits = sc_ecparams_keybits(key.u.ec.params.data,key.u.ec.params.len);
++		type = SC_PKCS15_TYPE_PUBKEY_EC; break;
+ 	default:
+ 		sc_error(p15card->card->ctx, "Unsupported key algorithm.\n");
+ 		return SC_ERROR_NOT_SUPPORTED;
+Index: src/pkcs15init/pkcs15-init.h
+===================================================================
+--- src/pkcs15init/pkcs15-init.h	(wersja 3277)
++++ src/pkcs15init/pkcs15-init.h	(kopia robocza)
+@@ -391,6 +391,7 @@
+ 
+ extern struct sc_pkcs15init_operations *sc_pkcs15init_get_gpk_ops(void);
+ extern struct sc_pkcs15init_operations *sc_pkcs15init_get_miocos_ops(void);
++extern struct sc_pkcs15init_operations *sc_pkcs15init_get_oct_ops(void);
+ extern struct sc_pkcs15init_operations *sc_pkcs15init_get_cryptoflex_ops(void);
+ extern struct sc_pkcs15init_operations *sc_pkcs15init_get_cyberflex_ops(void);
+ extern struct sc_pkcs15init_operations *sc_pkcs15init_get_cardos_ops(void);
+Index: src/pkcs15init/Makefile.am
+===================================================================
+--- src/pkcs15init/Makefile.am	(wersja 3277)
++++ src/pkcs15init/Makefile.am	(kopia robocza)
+@@ -31,7 +31,7 @@
+ 	pkcs15-lib.c profile.c keycache.c \
+ 	pkcs15-gpk.c pkcs15-miocos.c pkcs15-cflex.c \
+ 	pkcs15-cardos.c pkcs15-jcop.c pkcs15-starcos.c \
+-	pkcs15-oberthur.c pkcs15-setcos.c pkcs15-incrypto34.c \
++	pkcs15-oberthur.c pkcs15-setcos.c pkcs15-incrypto34.c pkcs15-oct.c \
+ 	pkcs15-muscle.c pkcs15-asepcos.c
+ 
+ libpkcs15init_la_LDFLAGS = -version-info @OPENSC_LT_CURRENT@:@OPENSC_LT_REVISION@:@OPENSC_LT_AGE@ $(AM_LDFLAGS)
+Index: src/libopensc/card-piv.c
+===================================================================
+--- src/libopensc/card-piv.c	(wersja 3277)
++++ src/libopensc/card-piv.c	(kopia robocza)
+@@ -21,11 +21,11 @@
+  * License along with this library; if not, write to the Free Software
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+-
+ #include "internal.h"
+ #include <ctype.h>
+ #include <string.h>
+ #include <fcntl.h>
++#if HAVE_OPENSSL
+ #include <openssl/evp.h>
+ #include <openssl/bio.h>
+ #include <openssl/pem.h>
+@@ -1718,3 +1718,4 @@
+ 	return sc_get_driver();
+ }
+ #endif
++#endif
+\ brakuje znaku końca linii na końcu pliku 
+Index: src/libopensc/card.c
+===================================================================
+--- src/libopensc/card.c	(wersja 3277)
++++ src/libopensc/card.c	(kopia robocza)
+@@ -712,6 +712,19 @@
+ 	return _sc_card_add_algorithm(card, &info);
+ }
+ 
++int _sc_card_add_ec_alg(sc_card_t *card, unsigned int key_length,
++			 unsigned long flags)
++{
++	sc_algorithm_info_t info;
++
++	memset(&info, 0, sizeof(info));
++	info.algorithm = SC_ALGORITHM_EC;
++	info.key_length = key_length;
++	info.flags = flags;
++
++	return _sc_card_add_algorithm(card, &info);
++}
++
+ sc_algorithm_info_t * _sc_card_find_rsa_alg(sc_card_t *card,
+ 						 unsigned int key_length)
+ {
+Index: src/libopensc/pkcs15-algo.c
+===================================================================
+--- src/libopensc/pkcs15-algo.c	(wersja 3277)
++++ src/libopensc/pkcs15-algo.c	(kopia robocza)
+@@ -25,6 +25,8 @@
+ #include <ctype.h>
+ #include <assert.h>
+ #include <stdlib.h>
++#include <openssl/evp.h>
++#include <openssl/ec.h>
+ 
+ /*
+  * AlgorithmIdentifier handling
+@@ -68,6 +70,40 @@
+ 	return _sc_asn1_encode(ctx, asn1_des_iv, buf, buflen, depth + 1);
+ }
+ 
++static struct sc_asn1_entry	c_asn1_ec_params[] = {
++	{ "point",	SC_ASN1_OCTET_STRING, SC_ASN1_TAG_OCTET_STRING, 0, NULL, NULL },
++	{ NULL, 0, 0, 0, NULL, NULL }
++};
++
++static int
++asn1_decode_ec_params(sc_context_t *ctx, void **paramp,
++				const u8 *buf, size_t buflen, int depth)
++{
++//	struct sc_asn1_entry asn1_ec_params[2];
++// FIXME - now store ecparams simply in der form
++	int i;
++	sc_debug(ctx,"decoding ec params, %d bytes\n",buflen);
++
++	struct sc_ec_params *p=malloc(sizeof(struct sc_ec_params));
++	memcpy(p->rawparams=malloc(buflen),buf,buflen);
++	p->len=buflen;
++	*paramp=p;
++	return 0;
++}
++
++static int
++asn1_encode_ec_params(sc_context_t *ctx, void *params,
++				u8 **buf, size_t *buflen, int depth)
++{
++	struct sc_ec_params *p=(struct sc_ec_params *)params;
++	*buf=malloc(p->len);
++	if(!*buf)
++		return SC_ERROR_OUT_OF_MEMORY;
++	memcpy(*buf,p->rawparams,p->len);
++	*buflen=p->len;
++	return SC_SUCCESS;
++}
++
+ static const struct sc_asn1_entry	c_asn1_pbkdf2_params[] = {
+ 	{ "salt",	SC_ASN1_OCTET_STRING, SC_ASN1_TAG_OCTET_STRING, 0, NULL, NULL },
+ 	{ "count",	SC_ASN1_INTEGER, SC_ASN1_TAG_INTEGER, 0, NULL, NULL },
+@@ -207,6 +243,9 @@
+ #ifdef SC_ALGORITHM_RSA /* really rsaEncryption */
+ 	{ SC_ALGORITHM_RSA, {{ 1, 2, 840, 113549, 1, 1, 1 }}, NULL, NULL, NULL },
+ #endif
++#ifdef SC_ALGORITHM_EC
++	{ SC_ALGORITHM_EC, {{ 1, 2, 840, 10045, 2, 1 }}, asn1_decode_ec_params, asn1_encode_ec_params },
++#endif
+ #ifdef SC_ALGORITHM_DH
+ 	{ SC_ALGORITHM_DH, {{ 1, 2, 840, 10046, 2, 1 }}, NULL, NULL, NULL },
+ #endif
+Index: src/libopensc/ctx.c
+===================================================================
+--- src/libopensc/ctx.c	(wersja 3277)
++++ src/libopensc/ctx.c	(kopia robocza)
+@@ -65,6 +65,7 @@
+ 	{ "starcos",	(void *(*)(void)) sc_get_starcos_driver },
+ 	{ "tcos",	(void *(*)(void)) sc_get_tcos_driver },
+ 	{ "opengpg",	(void *(*)(void)) sc_get_openpgp_driver },
++	{ "oct",	(void *(*)(void)) sc_get_oct_driver },
+ 	{ "jcop",	(void *(*)(void)) sc_get_jcop_driver },
+ #ifdef HAVE_OPENSSL
+ 	{ "oberthur",	(void *(*)(void)) sc_get_oberthur_driver },
+Index: src/libopensc/pkcs15-piv.c
+===================================================================
+--- src/libopensc/pkcs15-piv.c	(wersja 3277)
++++ src/libopensc/pkcs15-piv.c	(kopia robocza)
+@@ -31,6 +31,9 @@
+ #include <opensc/log.h>
+ #include <opensc/cardctl.h>
+ #include <opensc/cards.h>
++#include "internal.h"
++#if HAVE_OPENSSL
++
+ #include <openssl/bio.h>
+ #include <openssl/rsa.h>
+ #include <openssl/pem.h>
+@@ -498,3 +501,4 @@
+ 		return sc_pkcs15emu_piv_init(p15card);
+ 	}
+ }
++#endif
+\ brakuje znaku końca linii na końcu pliku 
+Index: src/libopensc/pkcs15-pubkey.c
+===================================================================
+--- src/libopensc/pkcs15-pubkey.c	(wersja 3277)
++++ src/libopensc/pkcs15-pubkey.c	(kopia robocza)
+@@ -25,6 +25,10 @@
+ #include <string.h>
+ #include <stdio.h>
+ #include <assert.h>
++#include <openssl/ec.h>
++#include <openssl/evp.h>
++#include <openssl/bn.h>
++#include <openssl/x509.h>
+ 
+ static const struct sc_asn1_entry c_asn1_com_key_attr[] = {
+ 	{ "iD",		 SC_ASN1_PKCS15_ID, SC_ASN1_TAG_OCTET_STRING, 0, NULL, NULL },
+@@ -191,6 +195,11 @@
+ 
+ 		sc_format_asn1_entry(asn1_dsakey_attr + 0, &pubkey->path, NULL, 1);
+ 		break;
++	case SC_PKCS15_TYPE_PUBKEY_EC:
++//FIXME
++		*buf=0;
++		*buflen=0;
++		return 0;
+ 	default:
+ 		sc_error(ctx, "Unsupported public key type: %X\n", obj->type);
+ 		SC_FUNC_RETURN(ctx, 0, SC_ERROR_INTERNAL);
+@@ -228,6 +237,18 @@
+ 	{ NULL, 0, 0, 0, NULL, NULL }
+ };
+ 
++static struct sc_asn1_entry c_asn1_public_key_ec[2] = {
++	{ "ec", SC_ASN1_STRUCT, SC_ASN1_TAG_SEQUENCE | SC_ASN1_CONS, 0, NULL, NULL },
++	{ NULL, 0, 0, 0, NULL, NULL }
++};
++
++static struct sc_asn1_entry c_asn1_ec[2] = {
++	{ "point",  SC_ASN1_OCTET_STRING, SC_ASN1_TAG_INTEGER, SC_ASN1_ALLOC|SC_ASN1_UNSIGNED, NULL, NULL },
++/*ecparams*/
++	{ NULL, 0, 0, 0, NULL, NULL }
++};
++
++
+ static struct sc_asn1_entry c_asn1_dsa_pub_coefficients[5] = {
+ 	{ "publicKey",SC_ASN1_OCTET_STRING, SC_ASN1_TAG_INTEGER, SC_ASN1_ALLOC|SC_ASN1_UNSIGNED, NULL, NULL },
+ 	{ "paramP",   SC_ASN1_OCTET_STRING, SC_ASN1_TAG_INTEGER, SC_ASN1_ALLOC|SC_ASN1_UNSIGNED, NULL, NULL },
+@@ -285,6 +306,74 @@
+ }
+ 
+ int
++sc_pkcs15_encode_pubkey_ec(sc_context_t *ctx,
++		struct sc_pkcs15_pubkey_ec *key,
++		u8 **buf, size_t *buflen)
++{
++//FIXME - use internal asn.1 routines to encode/decode keys
++	int res=-1;
++	BIGNUM *bn=0;
++	EC_KEY *eckey=0;
++	EC_GROUP *group=0;
++	EC_POINT *point=0;
++	EVP_PKEY *pkey=0;
++	bn=BN_bin2bn(key->point.data,key->point.len,0);
++	eckey=EC_KEY_new();
++	group=d2i_ECPKParameters(0,(const unsigned char **)&key->params.data,key->params.len);
++	point=EC_POINT_bn2point(group,bn,0,0);
++	if(!bn || !eckey || !group || !point)
++		goto ec_encode_failed;
++	if(!EC_KEY_set_group(eckey,group))
++		goto ec_encode_failed;
++	if(!EC_KEY_set_public_key(eckey,point))
++		goto ec_encode_failed;
++	pkey=EVP_PKEY_new();
++	if(!pkey)
++		goto ec_encode_failed;
++	if(!EVP_PKEY_assign_EC_KEY(pkey,eckey))
++		goto ec_encode_failed;
++	
++	*buf=0;
++	*buflen=i2d_PUBKEY(pkey,buf);
++	if(*buflen>0)
++		res=0;
++ec_encode_failed:
++	if(pkey)
++		EVP_PKEY_free(pkey);		
++/*	if(eckey)
++		EC_KEY_free(eckey);*/
++	if(group)
++		EC_GROUP_free(group);
++	if(point)
++		EC_POINT_free(point);	
++	if(bn)
++		BN_free(bn);
++	return res;
++}
++
++int
++sc_pkcs15_decode_pubkey_ec(sc_context_t *ctx,
++			struct sc_pkcs15_pubkey_ec *key,
++			const u8 *buf, size_t buflen)
++{
++//FIXME - use internal asn.1 routines to encode/decode keys
++	sc_debug(ctx,"decoding ec pubkey, len:%d\n",buflen);
++	key->point.len=buflen;
++	memcpy(key->point.data=malloc(buflen),buf,buflen);
++/*
++	sc_format_asn1_entry(asn1_ec + 0,
++				&key->point.data, &key->point.len, 0);
++
++	r = sc_asn1_decode(ctx, asn1_ec, buf, buflen, NULL, NULL);
++	SC_TEST_RET(ctx, r, "ASN.1 parsing of ec public key failed");
++*/
++	return 0;
++
++
++}
++
++
++int
+ sc_pkcs15_decode_pubkey_dsa(sc_context_t *ctx,
+ 		struct sc_pkcs15_pubkey_dsa *key,
+ 		const u8 *buf, size_t buflen)
+@@ -350,6 +439,9 @@
+ 		return sc_pkcs15_encode_pubkey_rsa(ctx, &key->u.rsa, buf, len);
+ 	if (key->algorithm == SC_ALGORITHM_DSA)
+ 		return sc_pkcs15_encode_pubkey_dsa(ctx, &key->u.dsa, buf, len);
++	if (key->algorithm == SC_ALGORITHM_EC) {
++		return sc_pkcs15_encode_pubkey_ec(ctx, &key->u.ec, buf, len);
++	}
+ 	sc_error(ctx, "Encoding of public key type %u not supported\n",
+ 			key->algorithm);
+ 	return SC_ERROR_NOT_SUPPORTED;
+@@ -364,6 +456,8 @@
+ 		return sc_pkcs15_decode_pubkey_rsa(ctx, &key->u.rsa, buf, len);
+ 	if (key->algorithm == SC_ALGORITHM_DSA)
+ 		return sc_pkcs15_decode_pubkey_dsa(ctx, &key->u.dsa, buf, len);
++	if (key->algorithm == SC_ALGORITHM_EC)
++		return sc_pkcs15_decode_pubkey_ec(ctx, &key->u.ec, buf, len);
+ 	sc_error(ctx, "Decoding of public key type %u not supported\n",
+ 			key->algorithm);
+ 	return SC_ERROR_NOT_SUPPORTED;
+@@ -393,6 +487,9 @@
+ 	case SC_PKCS15_TYPE_PUBKEY_DSA:
+ 		algorithm = SC_ALGORITHM_DSA;
+ 		break;
++	case SC_PKCS15_TYPE_PUBKEY_EC:
++		algorithm = SC_ALGORITHM_EC;
++		break;
+ 	default:
+ 		sc_error(p15card->card->ctx, "Unsupported public key type.");
+ 		return SC_ERROR_NOT_SUPPORTED;
+Index: src/libopensc/pkcs15.c
+===================================================================
+--- src/libopensc/pkcs15.c	(wersja 3277)
++++ src/libopensc/pkcs15.c	(kopia robocza)
+@@ -878,9 +878,11 @@
+ 		return sc_pkcs15_compare_id(&((struct sc_pkcs15_cert_info *) data)->id, id);
+ 	case SC_PKCS15_TYPE_PRKEY_RSA:
+ 	case SC_PKCS15_TYPE_PRKEY_DSA:
++	case SC_PKCS15_TYPE_PRKEY_EC:
+ 		return sc_pkcs15_compare_id(&((struct sc_pkcs15_prkey_info *) data)->id, id);
+ 	case SC_PKCS15_TYPE_PUBKEY_RSA:
+ 	case SC_PKCS15_TYPE_PUBKEY_DSA:
++	case SC_PKCS15_TYPE_PUBKEY_EC:
+ 		return sc_pkcs15_compare_id(&((struct sc_pkcs15_pubkey_info *) data)->id, id);
+ 	case SC_PKCS15_TYPE_AUTH_PIN:
+ 		return sc_pkcs15_compare_id(&((struct sc_pkcs15_pin_info *) data)->auth_id, id);
+@@ -905,10 +907,12 @@
+ 	switch (obj->type) {
+ 	case SC_PKCS15_TYPE_PRKEY_RSA:
+ 	case SC_PKCS15_TYPE_PRKEY_DSA:
++	case SC_PKCS15_TYPE_PRKEY_EC:
+ 		usage = ((struct sc_pkcs15_prkey_info *) data)->usage;
+ 		break;
+ 	case SC_PKCS15_TYPE_PUBKEY_RSA:
+ 	case SC_PKCS15_TYPE_PUBKEY_DSA:
++	case SC_PKCS15_TYPE_PUBKEY_EC:
+ 		usage = ((struct sc_pkcs15_pubkey_info *) data)->usage;
+ 		break;
+ 	default:
+@@ -943,6 +947,7 @@
+ 		break;
+ 	case SC_PKCS15_TYPE_PRKEY_RSA:
+ 	case SC_PKCS15_TYPE_PRKEY_DSA:
++	case SC_PKCS15_TYPE_PRKEY_EC:
+ 		reference = ((struct sc_pkcs15_prkey_info *) data)->key_reference;
+ 		break;
+ 	default:
+@@ -960,9 +965,11 @@
+ 		return sc_compare_path(&((struct sc_pkcs15_cert_info *) data)->path, path);
+ 	case SC_PKCS15_TYPE_PRKEY_RSA:
+ 	case SC_PKCS15_TYPE_PRKEY_DSA:
++	case SC_PKCS15_TYPE_PRKEY_EC:
+ 		return sc_compare_path(&((struct sc_pkcs15_prkey_info *) data)->path, path);
+ 	case SC_PKCS15_TYPE_PUBKEY_RSA:
+ 	case SC_PKCS15_TYPE_PUBKEY_DSA:
++	case SC_PKCS15_TYPE_PUBKEY_EC:
+ 		return sc_compare_path(&((struct sc_pkcs15_pubkey_info *) data)->path, path);
+ 	case SC_PKCS15_TYPE_AUTH_PIN:
+ 		return sc_compare_path(&((struct sc_pkcs15_pin_info *) data)->path, path);
+Index: src/libopensc/pkcs15.h
+===================================================================
+--- src/libopensc/pkcs15.h	(wersja 3277)
++++ src/libopensc/pkcs15.h	(kopia robocza)
+@@ -108,6 +108,11 @@
+ 	sc_pkcs15_bignum_t exponent;
+ };
+ 
++struct sc_pkcs15_pubkey_ec {
++	sc_pkcs15_bignum_t point;
++	sc_pkcs15_bignum_t params;
++};
++
+ struct sc_pkcs15_prkey_rsa {
+ 	/* public components */
+ 	sc_pkcs15_bignum_t modulus;
+@@ -144,15 +149,17 @@
+ 
+ struct sc_pkcs15_pubkey {
+ 	int algorithm;
+-
++	
+ 	/* Decoded key */
+ 	union {
+ 		struct sc_pkcs15_pubkey_rsa rsa;
+ 		struct sc_pkcs15_pubkey_dsa dsa;
++		struct sc_pkcs15_pubkey_ec ec;
+ 	} u;
+ 
+ 	/* DER encoded raw key */
+ 	sc_pkcs15_der_t data;
++	struct sc_algorithm_id alg_id;
+ };
+ typedef struct sc_pkcs15_pubkey sc_pkcs15_pubkey_t;
+ 
+@@ -270,10 +277,12 @@
+ #define SC_PKCS15_TYPE_PRKEY			0x100
+ #define SC_PKCS15_TYPE_PRKEY_RSA		0x101
+ #define SC_PKCS15_TYPE_PRKEY_DSA		0x102
++#define SC_PKCS15_TYPE_PRKEY_EC			0x103
+ 
+ #define SC_PKCS15_TYPE_PUBKEY			0x200
+ #define SC_PKCS15_TYPE_PUBKEY_RSA		0x201
+ #define SC_PKCS15_TYPE_PUBKEY_DSA		0x202
++#define SC_PKCS15_TYPE_PUBKEY_EC		0x203
+ 
+ #define SC_PKCS15_TYPE_CERT			0x400
+ #define SC_PKCS15_TYPE_CERT_X509		0x401
+@@ -442,6 +451,12 @@
+ 			const u8 *, size_t);
+ int sc_pkcs15_encode_pubkey_rsa(struct sc_context *,
+ 			struct sc_pkcs15_pubkey_rsa *, u8 **, size_t *);
++
++int sc_pkcs15_decode_pubkey_ec(struct sc_context *ctx,
++	       		struct sc_pkcs15_pubkey_ec *pubkey,
++			const u8 *, size_t);
++
++
+ int sc_pkcs15_decode_pubkey_dsa(struct sc_context *ctx,
+ 	       		struct sc_pkcs15_pubkey_dsa *pubkey,
+ 			const u8 *, size_t);
+@@ -687,6 +702,10 @@
+ 	const sc_pkcs15_object_t *, const sc_pkcs15_prkey_info_t *);
+ int sc_pkcs15emu_add_rsa_pubkey(sc_pkcs15_card_t *,
+ 	const sc_pkcs15_object_t *, const sc_pkcs15_pubkey_info_t *);
++int sc_pkcs15emu_add_ec_prkey(sc_pkcs15_card_t *,
++	const sc_pkcs15_object_t *, const sc_pkcs15_prkey_info_t *);
++int sc_pkcs15emu_add_ec_pubkey(sc_pkcs15_card_t *,
++	const sc_pkcs15_object_t *, const sc_pkcs15_pubkey_info_t *);
+ int sc_pkcs15emu_add_x509_cert(sc_pkcs15_card_t *p15card,
+ 	const sc_pkcs15_object_t *, const sc_pkcs15_cert_info_t *);
+ int sc_pkcs15emu_add_data_object(sc_pkcs15_card_t *p15card,
+Index: src/libopensc/pkcs15-syn.c
+===================================================================
+--- src/libopensc/pkcs15-syn.c	(wersja 3277)
++++ src/libopensc/pkcs15-syn.c	(kopia robocza)
+@@ -30,6 +30,8 @@
+ 
+ extern int sc_pkcs15emu_openpgp_init_ex(sc_pkcs15_card_t *,
+ 					sc_pkcs15emu_opt_t *);
++extern int sc_pkcs15emu_oct_init_ex(sc_pkcs15_card_t *,
++					sc_pkcs15emu_opt_t *);
+ extern int sc_pkcs15emu_infocamere_init_ex(sc_pkcs15_card_t *,
+ 					sc_pkcs15emu_opt_t *);
+ extern int sc_pkcs15emu_starcert_init_ex(sc_pkcs15_card_t *,
+@@ -55,12 +57,15 @@
+ 	int			(*handler)(sc_pkcs15_card_t *, sc_pkcs15emu_opt_t *);
+ } builtin_emulators[] = {
+ 	{ "openpgp",	sc_pkcs15emu_openpgp_init_ex	},
++	{ "oct",	sc_pkcs15emu_oct_init_ex	},
+ 	{ "infocamere",	sc_pkcs15emu_infocamere_init_ex	},
+ 	{ "starcert",	sc_pkcs15emu_starcert_init_ex	},
+ 	{ "tcos",	sc_pkcs15emu_tcos_init_ex	},
+ 	{ "esteid",	sc_pkcs15emu_esteid_init_ex	},
+ 	{ "postecert",	sc_pkcs15emu_postecert_init_ex  },
++#if HAVE_OPENSSL
+ 	{ "PIV-II",     sc_pkcs15emu_piv_init_ex        },
++#endif
+ 	{ "gemsafe",	sc_pkcs15emu_gemsafe_init_ex	},
+ 	{ "actalis",	sc_pkcs15emu_actalis_init_ex	},
+ 	{ "atrust-acos",sc_pkcs15emu_atrust_acos_init_ex},
+@@ -327,6 +332,20 @@
+ 	return sc_pkcs15emu_object_add(p15card, SC_PKCS15_TYPE_PRKEY_RSA, obj, &key);
+ }
+ 
++int sc_pkcs15emu_add_ec_prkey(sc_pkcs15_card_t *p15card,
++	const sc_pkcs15_object_t *obj, const sc_pkcs15_prkey_info_t *in_key)
++{
++	sc_pkcs15_prkey_info_t key = *in_key;
++
++	if (key.access_flags == 0)
++		key.access_flags = SC_PKCS15_PRKEY_ACCESS_SENSITIVE
++				| SC_PKCS15_PRKEY_ACCESS_ALWAYSSENSITIVE
++				| SC_PKCS15_PRKEY_ACCESS_NEVEREXTRACTABLE
++				| SC_PKCS15_PRKEY_ACCESS_LOCAL;
++
++	return sc_pkcs15emu_object_add(p15card, SC_PKCS15_TYPE_PRKEY_EC, obj, &key);
++}
++
+ int sc_pkcs15emu_add_rsa_pubkey(sc_pkcs15_card_t *p15card,
+ 	const sc_pkcs15_object_t *obj, const sc_pkcs15_pubkey_info_t *in_key)
+ {
+@@ -338,6 +357,17 @@
+ 	return sc_pkcs15emu_object_add(p15card, SC_PKCS15_TYPE_PUBKEY_RSA, obj, &key);
+ }
+ 
++int sc_pkcs15emu_add_ec_pubkey(sc_pkcs15_card_t *p15card,
++	const sc_pkcs15_object_t *obj, const sc_pkcs15_pubkey_info_t *in_key)
++{
++	sc_pkcs15_pubkey_info_t key = *in_key;
++
++	if (key.access_flags == 0)
++		key.access_flags = SC_PKCS15_PRKEY_ACCESS_EXTRACTABLE;
++
++	return sc_pkcs15emu_object_add(p15card, SC_PKCS15_TYPE_PUBKEY_EC, obj, &key);
++}
++
+ int sc_pkcs15emu_add_x509_cert(sc_pkcs15_card_t *p15card,
+ 	const sc_pkcs15_object_t *obj, const sc_pkcs15_cert_info_t *cert)
+ {
+Index: src/libopensc/internal.h
+===================================================================
+--- src/libopensc/internal.h	(wersja 3277)
++++ src/libopensc/internal.h	(kopia robocza)
+@@ -113,6 +113,8 @@
+ int _sc_card_add_algorithm(struct sc_card *card, const struct sc_algorithm_info *info);
+ int _sc_card_add_rsa_alg(struct sc_card *card, unsigned int key_length,
+ 			 unsigned long flags, unsigned long exponent);
++int _sc_card_add_ec_alg(struct sc_card *card, unsigned int key_length,
++			 unsigned long flags);
+ struct sc_algorithm_info * _sc_card_find_rsa_alg(struct sc_card *card,
+ 						 unsigned int key_length);
+ 
+Index: src/libopensc/card-oct.c
+===================================================================
+--- src/libopensc/card-oct.c	(wersja 0)
++++ src/libopensc/card-oct.c	(wersja 0)
+@@ -0,0 +1,855 @@
++/*
++ * card-oct.c: Support for Siemens CardOS based cards and tokens
++ * 	(for example Aladdin eToken PRO, Eutron CryptoIdentity IT-SEC)
++ *
++ * Copyright (C) 2002  Andreas Jellinghaus <aj@dungeon.inka.de>
++ * Copyright (C) 2001  Juha Yrj�l� <juha.yrjola@iki.fi>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++
++#include "internal.h"
++#include "cardctl.h"
++#include <ctype.h>
++#include <string.h>
++
++#if HAVE_OPENSSL
++#include <openssl/ecdsa.h>
++#include <openssl/bio.h>
++#endif
++
++
++/* andreas says: hm, my card only works for small payloads */
++/* comment by okir: one of the examples in the developer guide
++ * also talks about copying data in chunks of 128.
++ * Either coincidence, or a known problem. */
++#define OCT_MAX_PAYLOAD	120
++
++static const struct sc_card_operations *iso_ops = NULL;
++
++struct sc_card_operations oct_ops;
++
++static struct sc_card_driver oct_drv = {
++	"OpenCryptoToken",
++	"oct",
++	&oct_ops,
++	NULL, 0, NULL
++};
++
++static struct sc_atr_table oct_atrs[] = {
++	/* 4.0 */
++//	{ "3b:e2:00:ff:c1:10:31:fe:55:c8:02:9c", NULL, NULL, SC_CARD_TYPE_ETOKEN_GENERIC, 0, NULL },
++	/* 4.01 */
++//	{ "3b:f2:98:00:ff:c1:10:31:fe:55:c8:03:15", NULL, NULL, SC_CARD_TYPE_ETOKEN_GENERIC, 0, NULL },
++	/* 4.01a */
++//	{ "3b:f2:98:00:ff:c1:10:31:fe:55:c8:04:12", NULL, NULL, SC_CARD_TYPE_ETOKEN_GENERIC, 0, NULL },
++	/* aladdin oct pro 64 - aj: not compatible :/ */
++	/* { "3b f2 18 00 ff c1 0a 31 fe 55 c8 06 8a", NULL, NULL, SC_CARD_TYPE_ETOKEN_GENERIC, 0, NULL }, */
++	/* Italian eID card, postecert */
++//	{ "3b:e9:00:ff:c1:10:31:fe:55:00:64:05:00:c8:02:31:80:00:47", NULL, NULL, SC_CARD_TYPE_ETOKEN_GENERIC, 0, NULL },
++	/* Italian eID card, infocamere */
++//	{ "3b:fb:98:00:ff:c1:10:31:fe:55:00:64:05:20:47:03:31:80:00:90:00:f3", NULL, NULL, SC_CARD_TYPE_ETOKEN_GENERIC, 0, NULL },
++	/* Another Italian InfocamereCard */
++//	{ "3b:fc:98:00:ff:c1:10:31:fe:55:c8:03:49:6e:66:6f:63:61:6d:65:72:65:28", NULL, NULL, SC_CARD_TYPE_ETOKEN_GENERIC, 0, NULL },
++//	{ "3b:f4:98:00:ff:c1:10:31:fe:55:4d:34:63:76:b4", NULL, NULL, SC_CARD_TYPE_ETOKEN_GENERIC, 0, NULL},
++	{ NULL, NULL, NULL, 0, 0, NULL }
++};
++
++struct blob {
++	struct blob *	next;
++	struct blob *	parent;
++	struct do_info *info;
++
++	sc_file_t *	file;
++	unsigned int	id;
++	int		status;
++
++	unsigned char *	data;
++	unsigned int	len;
++	struct blob *	files;
++};
++
++struct do_info {
++	unsigned int	id;
++	unsigned int	constructed : 1;
++	unsigned int	size;
++	int		(*get_fn)(sc_card_t *, unsigned int, u8 *, size_t);
++	int		(*put_fn)(sc_card_t *, unsigned int, const u8 *, size_t);
++};
++
++static struct blob *	oct_new_blob(struct blob *, unsigned int, int,
++				struct do_info *);
++static int		oct_get_cert(sc_card_t *, unsigned int,
++				u8 *, size_t);
++
++static struct do_info		oct_objects[] = {
++      { 0x1100,		1, 0,   NULL,    NULL     },
++      { 0x1101,		0, 0,   NULL,    NULL    },
++      { 0x5015,		1, 0,   NULL,    NULL     },
++      {	0x5f50,		1, 0,	NULL,	NULL	},
++      { 0x1234,		0, 0,	oct_get_cert,	NULL		},
++
++/*      {	0x004f,		0, 0,	sc_get_data,	sc_put_data	},
++      {	0x005e,		1, 0,	sc_get_data,	sc_put_data	},
++      {	0x0065,		1, 0,	sc_get_data,	sc_put_data	},
++      {	0x006e,		1, 0,	sc_get_data,	sc_put_data	},
++      {	0x0073,		1, 0,	sc_get_data,	sc_put_data	},
++      {	0x007a,		1, 0,	sc_get_data,	sc_put_data	},
++      {	0x5f50,		0, 0,	sc_get_data,	sc_put_data	},
++      { 0xb600,		1, 0,	pgp_get_pubkey,	NULL		},
++      { 0xb800,		1, 0,	pgp_get_pubkey,	NULL		},
++      { 0xa400,		1, 0,	pgp_get_pubkey,	NULL		},
++      { 0xb601,		0, 0,	pgp_get_pubkey_pem,NULL		},
++      { 0xb801,		0, 0,	pgp_get_pubkey_pem,NULL		},
++      { 0xa401,		0, 0,	pgp_get_pubkey_pem,NULL		},
++*/
++      { 0, 0, 0, NULL, NULL },
++};
++
++#define DRVDATA(card)        ((struct oct_priv_data *) ((card)->drv_data))
++struct oct_priv_data {
++	struct blob		mf;
++	struct blob *		current;
++
++	sc_security_env_t	sec_env;
++};
++
++static int
++oct_set_blob(struct blob *blob, const u8 *data, size_t len)
++{
++	if (blob->data)
++		free(blob->data);
++	blob->len    = len;
++	blob->status = 0;
++	blob->data   = (unsigned char *) malloc(len);
++	memcpy(blob->data, data, len);
++
++	blob->file->size = len;
++	return 0;
++}
++
++static struct blob *
++oct_new_blob(struct blob *parent, unsigned int file_id,
++		int file_type, struct do_info *info)
++{
++	sc_file_t	*file = sc_file_new();
++	struct blob	*blob, **p;
++
++	blob = (struct blob *) calloc(1, sizeof(*blob));
++	blob->parent = parent;
++	blob->id     = file_id;
++	blob->file   = file;
++	blob->info   = info;
++
++	file->type   = file_type;
++	file->path   = parent->file->path;
++	file->ef_structure = SC_FILE_EF_TRANSPARENT;
++	file->size   = info->size;
++
++	if(info->size>0) {
++		blob->len=info->size;
++		blob->data=malloc(info->size);
++		memset(blob->data,0,sizeof(info->size));
++	}
++
++	sc_append_file_id(&file->path, file_id);
++
++	for (p = &parent->files; *p; p = &(*p)->next)
++		;
++	*p = blob;
++
++	return blob;
++}
++
++static int
++oct_read_blob(sc_card_t *card, struct blob *blob)
++{
++	unsigned char	buffer[2048];
++	int		r;
++
++	if (blob->data != NULL)
++		return 0;
++	if (blob->info == NULL)
++		return blob->status;
++	if (blob->info->get_fn == NULL) 
++		return 0;
++	sc_ctx_suppress_errors_on(card->ctx);
++	r = blob->info->get_fn(card, blob->id, buffer, sizeof(buffer));
++	sc_ctx_suppress_errors_off(card->ctx);
++
++	if (r < 0) {
++		blob->status = r;
++		return r;
++	}
++
++	return oct_set_blob(blob, buffer, r);
++}
++
++static int
++oct_enumerate_blob(sc_card_t *card, struct blob *blob)
++{
++  return 0;
++}
++static int
++oct_get_blob(sc_card_t *card, struct blob *blob, unsigned int id,
++		struct blob **ret)
++{
++	struct blob		*child;
++	int			r;
++	SC_FUNC_CALLED(card->ctx, 1);
++
++	if ((r = oct_enumerate_blob(card, blob)) < 0)
++		return r;
++
++	for (child = blob->files; child; child = child->next) {
++		sc_debug(card->ctx,"child: %x\n",child->id);
++		if (child->id == id)
++			break;
++	}
++
++	if (child != NULL) {
++		(void) oct_read_blob(card, child);
++		*ret = child;
++		SC_FUNC_RETURN(card->ctx,1,SC_SUCCESS);
++	}
++	SC_FUNC_RETURN(card->ctx,1,SC_ERROR_FILE_NOT_FOUND);
++}
++
++static int
++oct_select_file(sc_card_t *card, const sc_path_t *path, sc_file_t **ret)
++{
++	struct oct_priv_data *priv = DRVDATA(card);
++	struct blob	*blob;
++	sc_path_t	path_copy;
++	unsigned int	n;
++	int		r;
++	SC_FUNC_CALLED(card->ctx, 1);
++
++/*	if (path->type == SC_PATH_TYPE_DF_NAME)
++		return iso_ops->select_file(card, path, ret);
++	if (path->type != SC_PATH_TYPE_PATH)
++		return SC_ERROR_INVALID_ARGUMENTS;*/
++	if (path->len < 2 || (path->len & 1))
++		SC_FUNC_RETURN(card->ctx,1,SC_ERROR_INVALID_ARGUMENTS);
++	if (!memcmp(path->value, "\x3f\x00", 2)) {
++		memcpy(path_copy.value, path->value + 2, path->len - 2);
++		path_copy.len = path->len - 2;
++		path = &path_copy;
++	}
++
++	blob = &priv->mf;
++	for (n = 0; n < path->len; n += 2) {
++		r = oct_get_blob(card, blob,
++				(path->value[n] << 8) | path->value[n+1],
++				&blob);
++		if (r < 0) {
++			priv->current = NULL;
++			SC_FUNC_RETURN(card->ctx,1,r);
++		}
++	}
++
++	priv->current = blob;
++
++	if (ret)
++		sc_file_dup(ret, blob->file);
++	SC_FUNC_RETURN(card->ctx,1,SC_SUCCESS);
++}
++
++static int
++oct_list_files(sc_card_t *card, u8 *buf, size_t buflen)
++{
++	struct oct_priv_data *priv = DRVDATA(card);
++	struct blob	*blob;
++	unsigned int	k;
++	int		r;
++
++	blob = priv->current;
++	if (blob->file->type != SC_FILE_TYPE_DF)
++		return SC_ERROR_OBJECT_NOT_VALID;
++
++	if ((r = oct_enumerate_blob(card, blob)) < 0)
++		return r;
++
++	for (k = 0, blob = blob->files; blob; blob = blob->next) {
++		if (k + 2 > buflen)
++			break;
++		buf[k++] = blob->id >> 8;
++		buf[k++] = blob->id;
++	}
++
++	return k;
++}
++
++static int
++oct_read_binary(sc_card_t *card, unsigned int idx,
++		u8 *buf, size_t count, unsigned long flags)
++{
++	struct oct_priv_data *priv = DRVDATA(card);
++	struct blob	*blob;
++	int		r;
++
++	if ((blob = priv->current) == NULL)
++		return SC_ERROR_FILE_NOT_FOUND;
++
++	if (blob->file->type != SC_FILE_TYPE_WORKING_EF)
++		return SC_ERROR_FILE_NOT_FOUND;
++
++	if ((r = oct_read_blob(card, blob)) < 0)
++		return r;
++
++	if (idx > blob->len)
++		return SC_ERROR_INCORRECT_PARAMETERS;
++
++	if (idx + count > blob->len)
++		count = blob->len - idx;
++
++	memcpy(buf, blob->data + idx, count);
++	return count;
++}
++
++static int
++oct_write_binary(sc_card_t *card, unsigned int idx,
++		const u8 *buf, size_t count, unsigned long flags)
++{
++	return SC_ERROR_NOT_SUPPORTED;
++}
++static int
++oct_read_binary_(sc_card_t *card, unsigned int idx,
++		u8 *buf, size_t count, unsigned long flags);
++
++static int
++oct_get_cert(sc_card_t *card, unsigned int tag, u8 *buf, size_t buf_len)
++{
++	int r,total;
++	sc_apdu_t apdu;
++        /*bedziemy wysylac sciezke, czyli CASE 3 */
++	sc_format_apdu(card, &apdu, SC_APDU_CASE_1, 0x04/*select file*/, 0, 0);
++	apdu.resp = 0;
++	apdu.le = 0;
++	apdu.resplen = 0;
++
++	apdu.data = 0;
++	apdu.lc = 0;
++	apdu.datalen = 0;
++	apdu.sensitive = 1;
++	r = sc_transmit_apdu(card, &apdu);
++	SC_TEST_RET(card->ctx, r, "APDU transmit failed");
++	
++	total=0;
++	
++	do {
++	  r=oct_read_binary_(card,total,buf+total,buf_len-total>128 ? 128:buf_len-total,0);
++	  if(r<0) return r;
++	  total+=r;
++	} while(r==128);
++		
++        return total;
++}
++
++static int oct_finish(sc_card_t *card)
++{
++	return 0;
++}
++
++static int oct_match_card(sc_card_t *card)
++{
++	int i;
++
++	i = _sc_match_atr(card, oct_atrs, &card->type);
++	if (i < 0)
++		return 0; 
++	return 1;
++}
++
++static int oct_init(sc_card_t *card)
++{
++	unsigned long	flags;
++        struct oct_priv_data *priv;
++	sc_file_t	*file = NULL;
++	struct do_info	*info;
++	int		r;
++
++	card->name = "OpenCryptoToken";
++	card->cla = 0x00;
++	priv = (struct oct_priv_data *) calloc (1, sizeof *priv);
++	if (!priv)
++		return SC_ERROR_OUT_OF_MEMORY;
++	card->drv_data = priv;
++
++	file=sc_file_new();
++	sc_format_path("3f00", &file->path);
++	file->type = SC_FILE_TYPE_DF;
++	file->id = 0x3f00;
++
++	priv->mf.file = file;
++	priv->mf.id = 0x3F00;
++
++	priv->current = &priv->mf;
++
++	/* Populate MF - add all blobs listed in the pgp_objects
++	 * table. */
++	for (info = oct_objects; info->id > 0; info++) {
++		oct_new_blob(&priv->mf, info->id,
++			  	info->constructed? SC_FILE_TYPE_DF
++					  	 : SC_FILE_TYPE_WORKING_EF,
++				info);
++	}
++
++
++
++	/* Set up algorithm info. */
++	flags = SC_ALGORITHM_NEED_USAGE
++//		| SC_ALGORITHM_RSA_RAW
++//		| SC_ALGORITHM_RSA_HASH_NONE
++		| SC_ALGORITHM_EC_F_P
++		| SC_ALGORITHM_EC_NAMEDCURVE
++		| SC_ALGORITHM_EC_UNCOMPRESS
++		| SC_ALGORITHM_ONBOARD_KEY_GEN
++		;
++//	_sc_card_add_rsa_alg(card,  512, flags, 0);
++//	_sc_card_add_rsa_alg(card,  768, flags, 0);
++//	_sc_card_add_rsa_alg(card, 1024, flags, 0);
++
++	_sc_card_add_ec_alg(card,192,flags);
++
++	/* we need read_binary&friends with max 128 bytes per read */
++	if (card->max_send_size > 128)
++		card->max_send_size = 128;
++	if (card->max_recv_size > 128)
++		card->max_recv_size = 128;
++
++	return 0;
++}
++
++static const struct sc_card_error oct_errors[] = {
++/* some error inside the card */
++/* i.e. nothing you can do */
++{ 0x6581, SC_ERROR_MEMORY_FAILURE,	"EEPROM error; command aborted"}, 
++{ 0x6fff, SC_ERROR_CARD_CMD_FAILED,	"internal assertion error"},
++{ 0x6700, SC_ERROR_WRONG_LENGTH,	"LC invalid"}, 
++{ 0x6985, SC_ERROR_CARD_CMD_FAILED,	"no random number available"}, 
++{ 0x6f81, SC_ERROR_CARD_CMD_FAILED,	"file invalid, maybe checksum error"}, 
++{ 0x6f82, SC_ERROR_CARD_CMD_FAILED,	"not enough memory in xram"}, 
++{ 0x6f84, SC_ERROR_CARD_CMD_FAILED,	"general protection fault"}, 
++
++/* the card doesn't now thic combination of ins+cla+p1+p2 */
++/* i.e. command will never work */
++{ 0x6881, SC_ERROR_NO_CARD_SUPPORT,	"logical channel not supported"}, 
++{ 0x6a86, SC_ERROR_INCORRECT_PARAMETERS,"p1/p2 invalid"}, 
++{ 0x6d00, SC_ERROR_INS_NOT_SUPPORTED,	"ins invalid"}, 
++{ 0x6e00, SC_ERROR_CLASS_NOT_SUPPORTED,	"class invalid (hi nibble)"}, 
++
++/* known command, but incorrectly used */
++/* i.e. command could work, but you need to change something */
++{ 0x6981, SC_ERROR_CARD_CMD_FAILED,	"command cannot be used for file structure"}, 
++{ 0x6a80, SC_ERROR_INCORRECT_PARAMETERS,"invalid parameters in data field"}, 
++{ 0x6a81, SC_ERROR_NOT_SUPPORTED,	"function/mode not supported"}, 
++{ 0x6a85, SC_ERROR_INCORRECT_PARAMETERS,"lc does not fit the tlv structure"}, 
++{ 0x6986, SC_ERROR_INCORRECT_PARAMETERS,"no current ef selected"}, 
++{ 0x6a87, SC_ERROR_INCORRECT_PARAMETERS,"lc does not fit p1/p2"}, 
++{ 0x6c00, SC_ERROR_WRONG_LENGTH,	"le does not fit the data to be sent"}, 
++{ 0x6f83, SC_ERROR_CARD_CMD_FAILED,	"command must not be used in transaction"}, 
++
++/* (something) not found */
++{ 0x6987, SC_ERROR_INCORRECT_PARAMETERS,"key object for sm not found"}, 
++{ 0x6f86, SC_ERROR_CARD_CMD_FAILED,	"key object not found"}, 
++{ 0x6a82, SC_ERROR_FILE_NOT_FOUND,	"file not found"}, 
++{ 0x6a83, SC_ERROR_RECORD_NOT_FOUND,	"record not found"}, 
++{ 0x6a88, SC_ERROR_CARD_CMD_FAILED,	"object not found"}, 
++
++/* (something) invalid */
++{ 0x6884, SC_ERROR_CARD_CMD_FAILED,	"chaining error"}, 
++{ 0x6984, SC_ERROR_CARD_CMD_FAILED,	"bs object has invalid format"}, 
++{ 0x6988, SC_ERROR_INCORRECT_PARAMETERS,"key object used for sm has invalid format"}, 
++
++/* (something) deactivated */
++{ 0x6283, SC_ERROR_CARD_CMD_FAILED,	"file is deactivated"	},
++{ 0x6983, SC_ERROR_AUTH_METHOD_BLOCKED,	"bs object blocked"}, 
++
++/* access denied */
++{ 0x6300, SC_ERROR_SECURITY_STATUS_NOT_SATISFIED,"authentication failed"}, 
++{ 0x6982, SC_ERROR_SECURITY_STATUS_NOT_SATISFIED,"required access right not granted"}, 
++
++/* other errors */
++{ 0x6a84, SC_ERROR_CARD_CMD_FAILED,	"not enough memory"}, 
++
++/* command ok, execution failed */
++{ 0x6f00, SC_ERROR_CARD_CMD_FAILED,	"technical error (see eToken developers guide)"}, 
++
++/* no error, maybe a note */
++{ 0x9000, SC_NO_ERROR,		NULL}, 
++{ 0x9001, SC_NO_ERROR,		"success, but eeprom weakness detected"}, 
++{ 0x9850, SC_NO_ERROR,		"over/underflow useing in/decrease"},
++{ 0x0000, SC_NO_ERROR,		"ok"}
++};
++
++static int oct_check_sw(sc_card_t *card, unsigned int sw1, unsigned int sw2)
++{
++	const int err_count = sizeof(oct_errors)/sizeof(oct_errors[0]);
++	int i;
++			        
++	for (i = 0; i < err_count; i++) {
++		if (oct_errors[i].SWs == ((sw1 << 8) | sw2)) {
++			if ( oct_errors[i].errorstr ) 
++				sc_error(card->ctx, "%s\n",
++				 	oct_errors[i].errorstr);
++			return oct_errors[i].errorno;
++		}
++	}
++
++        sc_error(card->ctx, "Unknown SWs; SW1=%02X, SW2=%02X\n", sw1, sw2);
++	return SC_ERROR_CARD_CMD_FAILED;
++}
++
++static void add_acl_entry(sc_file_t *file, int op, u8 byte)
++{
++	unsigned int method, key_ref = SC_AC_KEY_REF_NONE;
++
++	switch (byte) {
++	case 0x00:
++		method = SC_AC_NONE;
++		break;
++	case 0xFF:
++		method = SC_AC_NEVER;
++		break;
++	default:
++		if (byte > 0x7F) {
++			method = SC_AC_UNKNOWN;
++		} else {
++			method = SC_AC_CHV;
++			key_ref = byte;
++		}
++		break;
++	}
++	sc_file_add_acl_entry(file, op, method, key_ref);
++}
++
++static int acl_to_byte(const sc_acl_entry_t *e)
++{
++	if (e != NULL) {
++		switch (e->method) {
++		case SC_AC_NONE:
++			return 0x00;
++		case SC_AC_NEVER:
++			return 0xFF;
++		case SC_AC_CHV:
++		case SC_AC_TERM:
++		case SC_AC_AUT:
++			if (e->key_ref == SC_AC_KEY_REF_NONE)
++				return -1;
++			if (e->key_ref > 0x7F)
++				return -1;
++			return e->key_ref;
++		}
++	}
++        return 0x00;
++}
++
++static const int df_acl[9] = {
++	-1,			/* LCYCLE (life cycle change) */
++	SC_AC_OP_UPDATE,	/* UPDATE Objects */
++	-1,			/* APPEND Objects */
++
++	SC_AC_OP_INVALIDATE,	/* DF */
++	SC_AC_OP_REHABILITATE,	/* DF */
++	SC_AC_OP_DELETE,	/* DF */
++
++	-1,			/* ADMIN DF */
++	SC_AC_OP_CREATE,	/* Files */
++	-1			/* Reserved */
++};
++static const int ef_acl[9] = {
++	SC_AC_OP_READ,		/* Data */
++	SC_AC_OP_UPDATE,	/* Data (write file content) */
++	SC_AC_OP_WRITE,		/* */
++
++	SC_AC_OP_INVALIDATE,	/* EF */
++	SC_AC_OP_REHABILITATE,	/* EF */
++	SC_AC_OP_ERASE,		/* (delete) EF */
++
++	/* XXX: ADMIN should be an ACL type of its own, or mapped
++	 * to erase */
++	-1,			/* ADMIN EF (modify meta information?) */
++	-1,			/* INC (-> cylic fixed files) */
++	-1			/* DEC */
++};
++
++static void parse_sec_attr(sc_file_t *file, const u8 *buf, size_t len)
++{
++	size_t i;
++	const int *idx;
++
++	idx = (file->type == SC_FILE_TYPE_DF) ?  df_acl : ef_acl;
++
++	/* acl defaults to 0xFF if unspecified */
++	for (i = 0; i < 9; i++)
++		if (idx[i] != -1)
++			add_acl_entry(file, idx[i], (u8)((i < len) ? buf[i] : 0xFF));
++}
++
++static int oct_create_file(sc_card_t *card, sc_file_t *file)
++{
++	struct oct_priv_data *priv = DRVDATA(card);
++	struct blob	*blob,*parent;
++	unsigned int	k;
++	int		r;
++	struct do_info 	*info;
++	SC_FUNC_CALLED(card->ctx, 1);
++
++	parent = priv->current;
++	if (!parent || parent->file->type != SC_FILE_TYPE_DF)
++		SC_FUNC_RETURN(card->ctx, 1,SC_ERROR_OBJECT_NOT_VALID);
++	info=calloc(1,sizeof(struct do_info));
++	memset(info,0,sizeof(struct do_info));
++	info->id=(file->path.value[file->path.len-2]<<8) | file->path.value[file->path.len-1];
++	info->size=file->size;
++	sc_debug(card->ctx,"Created file of %d bytes\n",info->size);
++	blob=oct_new_blob(parent, info->id,SC_FILE_TYPE_WORKING_EF,info);
++	blob->len=info->size;
++	blob->data=malloc(info->size);
++	memset(blob->data,0,sizeof(info->size));
++	SC_FUNC_RETURN(card->ctx, 1,SC_SUCCESS);
++}
++
++/*
++ * Restore the indicated SE
++ */
++static int
++oct_restore_security_env(sc_card_t *card, int se_num)
++{
++	return SC_SUCCESS;
++}
++
++static int
++oct_set_security_env(sc_card_t *card,
++			    const sc_security_env_t *env,
++			    int se_num) {
++	return SC_SUCCESS;			    
++}
++
++#if HAVE_OPENSSL
++static int
++openssl_compute_signature(sc_card_t *card, const u8 *data, size_t datalen,
++		     u8 *out, size_t outlen)
++{
++  ECDSA_SIG *sig;
++  EC_KEY    *eckey;
++  BIO *in=0;
++
++  in = BIO_new(BIO_s_file());
++  if (BIO_read_filename(in, "/var/mrk/ecca/privkey.pem") <= 0) {
++    perror("privkey.pem");
++    return -1;
++  }
++  char *pass="qwerty";
++  eckey = PEM_read_bio_ECPrivateKey(in, NULL, NULL,pass);
++  if(eckey) {
++    fprintf(stderr,"key read!\n");
++  } else {
++    return -1;
++  }
++
++  sig = ECDSA_do_sign_ex(data, datalen, 0, 0,eckey);
++  
++  if(!sig) {
++  	return -1;
++  } 
++  BN_bn2bin(sig->r,out+24-BN_num_bytes(sig->r));
++  BN_bn2bin(sig->s,out+48-BN_num_bytes(sig->s));
++
++  return SC_SUCCESS;
++}
++#endif
++
++/*
++ * Compute digital signature
++ */
++
++/* internal function to do the actual signature computation */
++static int
++do_compute_signature(sc_card_t *card, const u8 *data, size_t datalen,
++		     u8 *out, size_t outlen)
++{
++#if 1
++	int r;
++	sc_apdu_t apdu;
++	u8 rbuf[SC_MAX_APDU_BUFFER_SIZE];
++	u8 sbuf[SC_MAX_APDU_BUFFER_SIZE];
++/*
++	if (datalen > SC_MAX_APDU_BUFFER_SIZE ||
++	    outlen > SC_MAX_APDU_BUFFER_SIZE)
++		return SC_ERROR_INTERNAL;
++*/
++	sc_format_apdu(card, &apdu, SC_APDU_CASE_3_SHORT, 0x05, 0,0);
++	apdu.resp = 0;
++	apdu.le = 0;
++	apdu.resplen = 0;
++
++        *(int *)sbuf=0;
++	memcpy(sbuf+4, data, datalen);
++	apdu.data = sbuf;
++	apdu.lc = datalen+4;
++	apdu.datalen = datalen+4;
++	apdu.sensitive = 1;
++	r = sc_transmit_apdu(card, &apdu);
++	SC_TEST_RET(card->ctx, r, "APDU transmit failed");
++
++
++	sc_format_apdu(card,&apdu,SC_APDU_CASE_2_SHORT,0x82,0,0);
++
++	apdu.resp=rbuf;
++	apdu.le=128;
++	apdu.resplen=sizeof(rbuf);
++	apdu.sensitive=1;
++	r = sc_transmit_apdu(card,&apdu);
++	SC_TEST_RET(card->ctx, r, "APDU transmit failed");
++
++	if (apdu.sw1 == 0x90 && apdu.sw2 == 0x00 && !(apdu.resplen&1)) {
++		int i;
++		for(i=0; i<apdu.resplen/2; i++) {
++			out[i]=rbuf[apdu.resplen/2-1-i];
++			out[i+apdu.resplen/2]=rbuf[apdu.resplen-1-i];
++		}
++//		memcpy(out, rbuf, apdu.resplen);
++		SC_FUNC_RETURN(card->ctx, 4, apdu.resplen);
++	}
++	SC_FUNC_RETURN(card->ctx, 4, sc_check_sw(card, apdu.sw1, apdu.sw2));
++#else
++	return openssl_compute_signature(card,data,datalen,out,outlen);
++#endif
++}
++
++static int
++oct_compute_signature(sc_card_t *card, const u8 *data, size_t datalen,
++			 u8 *out, size_t outlen)
++{
++	sc_debug(card->ctx,"bla computing signature, datalen:%d, outlen:%d\n",datalen,outlen);
++//	outlen=24*2;
++//	memset(out,0,outlen);
++	return do_compute_signature(card,data,datalen,out,outlen);
++//	return SC_SUCCESS;
++}
++
++static int
++oct_card_ctl(sc_card_t *card, unsigned long cmd, void *ptr)
++{
++/*	switch(cmd) {
++		case SC_CARDCTL_LIFECYCLE_SET:
++		return SC_SUCCESS;
++	}*/
++	return SC_ERROR_NOT_SUPPORTED;
++}
++
++/*
++ * The 0x80 thing tells the card it's okay to search parent
++ * directories as well for the referenced object.
++ * Unfortunately, it doesn't seem to work without this flag :-/
++ */
++static int
++oct_pin_cmd(sc_card_t *card, struct sc_pin_cmd_data *data,
++		 int *tries_left)
++{
++
++//	data->flags |= SC_PIN_CMD_NEED_PADDING;
++//	data->pin_reference |= 0x80;
++	/* FIXME: the following values depend on what pin length was
++	 * used when creating the BS objects */
++/*	
++	if (data->pin1.max_length == 0)
++		data->pin1.max_length = 8;
++	if (data->pin2.max_length == 0)
++		data->pin2.max_length = 8;
++	return iso_ops->pin_cmd(card, data, tries_left);
++*/	return 0;
++}
++
++static int
++oct_read_binary_(sc_card_t *card, unsigned int idx,
++		u8 *buf, size_t count, unsigned long flags)
++{
++	int r;
++	sc_apdu_t apdu;
++        u8  sbuf[4];
++	u8  rbuf[SC_MAX_APDU_BUFFER_SIZE];
++
++	sc_format_apdu(card, &apdu, SC_APDU_CASE_4_SHORT, 0x81, 0,0);
++
++	apdu.resp = rbuf;
++	apdu.le = count;
++	apdu.resplen = sizeof(rbuf);
++
++        *(unsigned short *)sbuf=idx;
++        *(unsigned short *)(sbuf+2)=count;
++
++	apdu.data = sbuf;
++	apdu.lc = 4;
++	apdu.datalen = 4;
++	apdu.sensitive = 1;
++	r = sc_transmit_apdu(card, &apdu);
++	SC_TEST_RET(card->ctx, r, "APDU transmit failed");
++
++	if (apdu.sw1 == 0x90 && apdu.sw2 == 0x00) {
++		memcpy(buf, rbuf, apdu.resplen);
++		SC_FUNC_RETURN(card->ctx, 4, apdu.resplen);
++	}
++	SC_FUNC_RETURN(card->ctx, 4, sc_check_sw(card, apdu.sw1, apdu.sw2));
++}
++
++
++static int oct_update_binary(sc_card_t *card,
++			 unsigned int idx, const u8 *buf,
++			 size_t count, unsigned long flags) {
++     sc_debug(card->ctx,"update_binary: %d bytes ar %d idx",count,idx);
++     struct oct_priv_data *priv = DRVDATA(card);
++     if(priv->current) {
++     	if(idx+count<=priv->current->len) {
++     		memcpy(priv->current->data+idx,buf,count);
++     		return count;
++     	} 
++     }
++}
++
++
++/* eToken R2 supports WRITE_BINARY, PRO Tokens support UPDATE_BINARY */
++
++static struct sc_card_driver * sc_get_driver(void)
++{
++	if (iso_ops == NULL)
++		iso_ops = sc_get_iso7816_driver()->ops;
++	oct_ops = *iso_ops;
++	oct_ops.match_card = oct_match_card;
++	oct_ops.init = oct_init;
++	oct_ops.finish = oct_finish;
++	oct_ops.select_file = oct_select_file;
++	oct_ops.create_file = oct_create_file;
++	oct_ops.set_security_env = oct_set_security_env;
++	oct_ops.restore_security_env = oct_restore_security_env;
++	oct_ops.compute_signature = oct_compute_signature;
++	oct_ops.update_binary = oct_update_binary;
++        oct_ops.read_binary = oct_read_binary;
++	oct_ops.list_files = oct_list_files;
++	oct_ops.check_sw = oct_check_sw;
++	oct_ops.card_ctl = oct_card_ctl;
++	oct_ops.pin_cmd = oct_pin_cmd;
++
++	return &oct_drv;
++}
++
++#if 1
++struct sc_card_driver * sc_get_oct_driver(void)
++{
++	return sc_get_driver();
++}
++#endif
+Index: src/libopensc/pkcs15-cert.c
+===================================================================
+--- src/libopensc/pkcs15-cert.c	(wersja 3277)
++++ src/libopensc/pkcs15-cert.c	(kopia robocza)
+@@ -33,14 +33,14 @@
+ static int parse_x509_cert(sc_context_t *ctx, const u8 *buf, size_t buflen, struct sc_pkcs15_cert *cert)
+ {
+ 	int r;
+-	struct sc_algorithm_id pk_alg, sig_alg;
++	struct sc_algorithm_id sig_alg;
+ 	sc_pkcs15_der_t pk = { NULL, 0 };
+ 	struct sc_asn1_entry asn1_version[] = {
+ 		{ "version", SC_ASN1_INTEGER, SC_ASN1_TAG_INTEGER, 0, &cert->version, NULL },
+ 		{ NULL, 0, 0, 0, NULL, NULL }
+ 	};
+ 	struct sc_asn1_entry asn1_pkinfo[] = {
+-		{ "algorithm",		SC_ASN1_ALGORITHM_ID,  SC_ASN1_TAG_SEQUENCE | SC_ASN1_CONS, 0, &pk_alg, NULL },
++		{ "algorithm",		SC_ASN1_ALGORITHM_ID,  SC_ASN1_TAG_SEQUENCE | SC_ASN1_CONS, 0, &cert->key.alg_id, NULL },
+ 		{ "subjectPublicKey",	SC_ASN1_BIT_STRING_NI, SC_ASN1_TAG_BIT_STRING, SC_ASN1_ALLOC, &pk.value, &pk.len },
+ 		{ NULL, 0, 0, 0, NULL, NULL }
+ 	};
+@@ -75,7 +75,7 @@
+ 	};
+ 	const u8 *obj;
+ 	size_t objlen;
+-	
++	sc_debug(ctx,"parsing %d bytes of cert data\n",buflen);	
+ 	memset(cert, 0, sizeof(*cert));
+ 	obj = sc_asn1_verify_tag(ctx, buf, buflen, SC_ASN1_TAG_SEQUENCE | SC_ASN1_CONS,
+ 				 &objlen);
+@@ -89,16 +89,19 @@
+ 
+ 	cert->version++;
+ 
+-	cert->key.algorithm = pk_alg.algorithm;
++//remove key.algorithm field, redundand
++	cert->key.algorithm = cert->key.alg_id.algorithm;
++
+ 	pk.len >>= 3;	/* convert number of bits to bytes */
+ 	cert->key.data = pk;
+-
++	
+ 	r = sc_pkcs15_decode_pubkey(ctx, &cert->key, pk.value, pk.len);
+ 	if (r < 0)
+ 		free(pk.value);
+-	sc_asn1_clear_algorithm_id(&pk_alg);
++
++//	pk_alg moved to cert->key, free with cert
++//	sc_asn1_clear_algorithm_id(&pk_alg);
+ 	sc_asn1_clear_algorithm_id(&sig_alg);
+-
+ 	return r;
+ }
+ 
+Index: src/libopensc/p15card-helper.c
+===================================================================
+--- src/libopensc/p15card-helper.c	(wersja 3277)
++++ src/libopensc/p15card-helper.c	(kopia robocza)
+@@ -25,10 +25,11 @@
+ #include <opensc/pkcs15.h>
+ #include <string.h>
+ #include <stdlib.h>
++#if HAVE_OPENSSL
+ #include <openssl/bio.h>
+ #include <openssl/rsa.h>
+ #include <openssl/x509.h>
+-
++#endif
+ int sc_pkcs15emu_initialize_objects(sc_pkcs15_card_t *p15card, p15data_items *items) {
+ 	sc_card_t* card = p15card->card;
+ 	const objdata* objects = items->objects;
+@@ -129,6 +130,7 @@
+ 	return sc_pkcs15emu_add_rsa_pubkey(p15card, &pubkey_obj, &pubkey_info);
+ }
+ 
++#if HAVE_OPENSSL
+ //int default_cert_handle(sc_pkcs15_card_t *p15card, p15data_items* items, cdata* cert, u8* data, size_t length) {
+ CERT_HANDLE_FUNCTION(default_cert_handle) {
+ 	/* Certificate data exists, parse it */
+@@ -201,6 +203,7 @@
+ 	}
+ 	SC_FUNC_RETURN(p15card->card->ctx, 1, r);
+ }
++#endif
+ 
+ int sc_pkcs15emu_initialize_certificates(sc_pkcs15_card_t *p15card, p15data_items* items) {
+ 	/* set certs */
+Index: src/libopensc/pkcs15-sec.c
+===================================================================
+--- src/libopensc/pkcs15-sec.c	(wersja 3277)
++++ src/libopensc/pkcs15-sec.c	(kopia robocza)
+@@ -184,16 +184,25 @@
+ 		return SC_ERROR_NOT_ALLOWED;
+ 	}
+ 
+-	alg_info = _sc_card_find_rsa_alg(p15card->card, prkey->modulus_length);
+-	if (alg_info == NULL) {
+-		sc_error(ctx, "Card does not support RSA with key length %d\n", prkey->modulus_length);
+-		return SC_ERROR_NOT_SUPPORTED;
++	if(obj->type==SC_PKCS15_TYPE_PRKEY_EC) {
++		sc_debug(ctx,"ECDSA sign,inlen:%d\n",inlen);
++		alg_info == NULL;
++		senv.algorithm=SC_ALGORITHM_EC;
++		if (inlen > sizeof(buf))
++			return SC_ERROR_BUFFER_TOO_SMALL;
++	} else {
++
++		alg_info = _sc_card_find_rsa_alg(p15card->card, prkey->modulus_length);
++		if (alg_info == NULL) {
++			sc_error(ctx, "Card does not support RSA with key length %d, flags: %d\n", prkey->modulus_length,flags);
++			return SC_ERROR_NOT_SUPPORTED;
++		}
++		senv.algorithm = SC_ALGORITHM_RSA;
++		/* Probably never happens, but better make sure */
++		if (inlen > sizeof(buf) || outlen < modlen)
++			return SC_ERROR_BUFFER_TOO_SMALL;
+ 	}
+-	senv.algorithm = SC_ALGORITHM_RSA;
+ 
+-	/* Probably never happens, but better make sure */
+-	if (inlen > sizeof(buf) || outlen < modlen)
+-		return SC_ERROR_BUFFER_TOO_SMALL;
+ 	memcpy(buf, in, inlen);
+ 	tmp = buf;
+ 
+@@ -217,13 +226,16 @@
+ 		inlen = tmplen;
+ 	}
+ 
++        if(senv.algorithm==SC_ALGORITHM_RSA) {
++
+ 	r = sc_get_encoding_flags(ctx, flags, alg_info->flags, &pad_flags, &sec_flags);
+ 	if (r != SC_SUCCESS) {
++		sc_debug(ctx,"can't get encoding flags\n");
+ 		sc_mem_clear(buf, sizeof(buf));
+ 		return r;
+ 	}
+ 	senv.algorithm_flags = sec_flags;
+-
++	sc_debug(ctx,"encoding flags:%x\n",sec_flags);
+ 	/* add the padding bytes (if necessary) */
+ 	if (pad_flags != 0) {
+ 		size_t tmplen = sizeof(buf);
+@@ -239,6 +251,7 @@
+ 			memset(tmp, 0, modlen-inlen);
+ 		}
+ 	}
++	}
+ 
+ 	senv.operation = SC_SEC_OPERATION_SIGN;
+ 	senv.flags = 0;
+Index: src/libopensc/pkcs15-oct.c
+===================================================================
+--- src/libopensc/pkcs15-oct.c	(wersja 0)
++++ src/libopensc/pkcs15-oct.c	(wersja 0)
+@@ -0,0 +1,285 @@
++/*
++ * PKCS15 emulation layer for OpenPGP card.
++ * To see how this works, run p15dump on your OpenPGP card.
++ *
++ * Copyright (C) 2003, Olaf Kirch <okir@suse.de>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++
++#include <opensc/pkcs15.h>
++#include <opensc/log.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdio.h>
++#include <assert.h>
++#include <dirent.h>
++
++int sc_pkcs15emu_oct_init_ex(sc_pkcs15_card_t *, sc_pkcs15emu_opt_t *);
++
++static const char *	pgp_pin_name[3] = {
++				"Signature PIN",
++				"Encryption PIN",
++				"Admin PIN"
++			};
++static const char *	pgp_key_name[3] = {
++				"Signature key",
++				"Encryption key",
++				"Authentication key"
++			};
++static const char *	pgp_pubkey_path[3] = {
++				"B601",
++				"B801",
++				"A401"
++			};
++
++static void
++set_string(char **strp, const char *value)
++{
++	if (*strp)
++		free(*strp);
++	*strp = value? strdup(value) : NULL;
++}
++
++/*
++ * This function pretty much follows what find_tlv in the GNUpg
++ * code does.
++ */
++static int
++read_file(sc_card_t *card, const char *path_name, void *buf, size_t len)
++{
++	sc_path_t	path;
++	sc_file_t	*file;
++	int		r;
++	sc_format_path(path_name, &path);
++	if ((r = sc_select_file(card, &path, &file)) < 0)
++		return r;
++
++/*	if (file->size < len)
++		len = file->size;*/
++	return sc_read_binary(card, 0, (u8 *) buf, len, 0);
++}
++
++static int
++sc_pkcs15emu_oct_init(sc_pkcs15_card_t *p15card)
++{
++	sc_card_t	*card = p15card->card;
++	sc_context_t	*ctx = card->ctx;
++	char		string[256];
++	u8		buffer[256];
++	size_t		length;
++	int		r, i;
++
++	set_string(&p15card->label, "OpenCryptoToken Card");
++	set_string(&p15card->manufacturer_id, "its.sed.pl");
++
++/*
++	if ((r = read_file(card, "004f", buffer, sizeof(buffer))) < 0)
++		goto failed;
++	sc_bin_to_hex(buffer, (size_t)r, string, sizeof(string), 0);
++	set_string(&p15card->serial_number, string);
++*/
++	p15card->version = 1;//(buffer[6] << 8) | buffer[7];
++
++	p15card->flags = 
++			 SC_PKCS15_CARD_FLAG_LOGIN_REQUIRED |
++			 SC_PKCS15_CARD_FLAG_PRN_GENERATION |
++			 SC_PKCS15_CARD_FLAG_EID_COMPLIANT;
++
++	/* Extract preferred language */
++/*
++	r = read_file(card, "00655f2d", string, sizeof(string)-1);
++	if (r < 0)
++		goto failed;
++	string[r] = '\0';
++
++	set_string(&p15card->preferred_language, string);
++*/
++	/* Get Application Related Data (006E) */
++/*
++	if ((r = sc_get_data(card, 0x006E, buffer, sizeof(buffer))) < 0)
++		goto failed;
++	length = r;
++*/
++	/* TBD: extract algorithm info */
++
++	/* Get CHV status bytes:
++	 *  00:		??
++	 *  01-03:	max length of pins 1-3
++	 *  04-07:	tries left for pins 1-3
++	 */
++/*
++	if ((r = read_file(card, "006E007300C4", buffer, sizeof(buffer))) < 0)
++		goto failed;
++	if (r != 7) {
++		sc_error(ctx,
++			"CHV status bytes have unexpected length "
++			"(expected 7, got %d)\n", r);
++		return SC_ERROR_OBJECT_NOT_VALID;
++	}
++*/
++	for (i = 0; i < 1; i++) {
++		unsigned int	flags;
++
++		struct sc_pkcs15_pin_info pin_info;
++		struct sc_pkcs15_object   pin_obj;
++
++		memset(&pin_info, 0, sizeof(pin_info));
++		memset(&pin_obj,  0, sizeof(pin_obj));
++
++		flags =	SC_PKCS15_PIN_FLAG_CASE_SENSITIVE |
++			SC_PKCS15_PIN_FLAG_INITIALIZED |
++			SC_PKCS15_PIN_FLAG_LOCAL;
++//		if (i == 2) {
++//			flags |= SC_PKCS15_PIN_FLAG_UNBLOCK_DISABLED |
++//				 SC_PKCS15_PIN_FLAG_SO_PIN;
++//		}
++
++		pin_info.auth_id.len   = 1;
++		pin_info.auth_id.value[0] = i + 1;
++		pin_info.reference     = i + 1;
++		pin_info.flags         = flags;
++		pin_info.type          = SC_PKCS15_PIN_TYPE_ASCII_NUMERIC;
++		pin_info.min_length    = 0;
++		pin_info.stored_length = 4;//buffer[1+i];
++		pin_info.max_length    = 4;//buffer[1+i];
++		pin_info.pad_char      = '\0';
++//		sc_format_path("3F00", &pin_info.path);
++		pin_info.tries_left    = 3;//buffer[4+i];
++
++		strncpy(pin_obj.label, "OCT PIN", SC_PKCS15_MAX_LABEL_SIZE - 1);
++		pin_obj.flags = SC_PKCS15_CO_FLAG_MODIFIABLE | SC_PKCS15_CO_FLAG_PRIVATE;
++
++		r = sc_pkcs15emu_add_pin_obj(p15card, &pin_obj, &pin_info);
++		if (r < 0)
++			return SC_ERROR_INTERNAL;
++	}
++
++	for (i = 0; i < 1; i++) {
++		static int	prkey_pin = 1;
++		static int	prkey_usage = 
++					SC_PKCS15_PRKEY_USAGE_SIGN
++					| SC_PKCS15_PRKEY_USAGE_SIGNRECOVER
++					| SC_PKCS15_PRKEY_USAGE_NONREPUDIATION
++					| SC_PKCS15_PRKEY_USAGE_DECRYPT
++					| SC_PKCS15_PRKEY_USAGE_UNWRAP;
++
++		struct sc_pkcs15_prkey_info prkey_info;
++		struct sc_pkcs15_object     prkey_obj;
++
++		memset(&prkey_info, 0, sizeof(prkey_info));
++		memset(&prkey_obj,  0, sizeof(prkey_obj));
++
++		prkey_info.id.len        = 1;
++		prkey_info.id.value[0]   = i + 1;
++		prkey_info.usage         = prkey_usage;
++		prkey_info.native        = 1;
++		prkey_info.key_reference = i;
++		prkey_info.modulus_length= 192;
++
++		strncpy(prkey_obj.label, "OCT Key", SC_PKCS15_MAX_LABEL_SIZE - 1);
++		prkey_obj.flags = SC_PKCS15_CO_FLAG_PRIVATE | SC_PKCS15_CO_FLAG_MODIFIABLE;
++		prkey_obj.auth_id.len      = 1;
++		prkey_obj.auth_id.value[0] = prkey_pin;
++
++		r = sc_pkcs15emu_add_ec_prkey(p15card, &prkey_obj, &prkey_info);
++		if (r < 0)
++			return SC_ERROR_INTERNAL;
++	}
++
++	for (i = 0; i < 1; i++) {
++		static int	pubkey_usage = SC_PKCS15_PRKEY_USAGE_VERIFY
++					| SC_PKCS15_PRKEY_USAGE_VERIFYRECOVER
++					| SC_PKCS15_PRKEY_USAGE_ENCRYPT
++					| SC_PKCS15_PRKEY_USAGE_WRAP;
++					
++
++		struct sc_pkcs15_pubkey_info pubkey_info;
++		struct sc_pkcs15_object      pubkey_obj;
++
++		memset(&pubkey_info, 0, sizeof(pubkey_info));
++		memset(&pubkey_obj,  0, sizeof(pubkey_obj));
++
++		pubkey_info.id.len = 1;
++		pubkey_info.id.value[0] = i +1;
++		pubkey_info.modulus_length = 1024;
++		pubkey_info.usage    = pubkey_usage;
++//		sc_format_path(pgp_pubkey_path[i], &pubkey_info.path);
++
++		strncpy(pubkey_obj.label, "OCT pubkey", SC_PKCS15_MAX_LABEL_SIZE - 1);
++		pubkey_obj.auth_id.len      = 1;
++		pubkey_obj.auth_id.value[0] = 3;
++		pubkey_obj.flags = SC_PKCS15_CO_FLAG_MODIFIABLE;
++
++		r = sc_pkcs15emu_add_ec_pubkey(p15card, &pubkey_obj, &pubkey_info);
++		if (r < 0)
++			return SC_ERROR_INTERNAL;
++	}
++
++	{
++	  char certdir[256];
++	  char fn[256];
++          char cert[2048];
++          int cert_len;
++          
++	  struct sc_pkcs15_cert_info cert_info;
++	  struct sc_pkcs15_object    cert_obj;
++	  sc_pkcs15_cert_t 		*cert_out;
++
++
++	  cert_len=read_file(card,"3f001234",cert,sizeof(cert));
++	  if(cert_len>0) {
++	          memset(&cert_info, 0, sizeof(cert_info));
++		  memset(&cert_obj,  0, sizeof(cert_obj));
++
++		  sc_pkcs15_format_id("1", &cert_info.id);
++		  cert_info.authority = 0;
++		  
++	  	  strncpy(cert_obj.label, "label", SC_PKCS15_MAX_LABEL_SIZE - 1);
++		  cert_obj.flags = SC_PKCS15_CO_FLAG_MODIFIABLE;
++
++                  cert_info.value.value = (unsigned char *) malloc(cert_info.value.len=cert_len);
++		  memcpy(cert_info.value.value,cert,cert_len);
++		  cert_info.id.len=1;
++		  cert_info.id.value[0]=1;
++		  int r = sc_pkcs15emu_add_x509_cert(p15card, &cert_obj, &cert_info);
++	  }
++	  
++	}
++
++	return 0;
++
++failed:	sc_error(card->ctx, "Failed to initialize OpenPGP emulation: %s\n",
++			sc_strerror(r));
++	return r;
++}
++
++static int oct_detect_card(sc_pkcs15_card_t *p15card)
++{
++	return 0;//strcmp(p15card->card->name, "OpenPGP");
++}
++
++int sc_pkcs15emu_oct_init_ex(sc_pkcs15_card_t *p15card,
++				 sc_pkcs15emu_opt_t *opts)
++{
++	if (opts && opts->flags & SC_PKCS15EMU_FLAGS_NO_CHECK)
++		return sc_pkcs15emu_oct_init(p15card);
++	else {
++		int r = oct_detect_card(p15card);
++		if (r)
++			return SC_ERROR_WRONG_CARD;
++		return sc_pkcs15emu_oct_init(p15card);
++	}
++}
+Index: src/libopensc/Makefile.am
+===================================================================
+--- src/libopensc/Makefile.am	(wersja 3277)
++++ src/libopensc/Makefile.am	(kopia robocza)
+@@ -27,12 +27,12 @@
+ 	\
+ 	card-setcos.c card-miocos.c card-flex.c card-gpk.c \
+ 	card-cardos.c card-tcos.c card-emv.c card-default.c \
+-	card-mcrd.c card-starcos.c card-openpgp.c card-jcop.c \
++	card-mcrd.c card-starcos.c card-openpgp.c card-jcop.c card-oct.c \
+ 	card-oberthur.c card-belpic.c card-atrust-acos.c \
+ 	card-incrypto34.c card-piv.c card-muscle.c card-acos5.c \
+ 	card-asepcos.c card-akis.c\
+ 	\
+-	pkcs15-openpgp.c pkcs15-infocamere.c pkcs15-starcert.c \
++	pkcs15-openpgp.c pkcs15-infocamere.c pkcs15-starcert.c pkcs15-oct.c \
+ 	pkcs15-tcos.c pkcs15-esteid.c pkcs15-postecert.c pkcs15-gemsafe.c \
+ 	pkcs15-actalis.c pkcs15-atrust-acos.c pkcs15-tccardos.c pkcs15-piv.c \
+ 	compression.c p15card-helper.c
+Index: src/libopensc/opensc.h
+===================================================================
+--- src/libopensc/opensc.h	(wersja 3277)
++++ src/libopensc/opensc.h	(kopia robocza)
+@@ -188,6 +188,15 @@
+ #define SC_ALGORITHM_RSA_HASH_SHA224	0x00001000
+ #define SC_ALGORITHM_RSA_HASHES		0x00001FE0
+ 
++#define SC_ALGORITHM_EC_F_P		0x00000001
++#define SC_ALGORITHM_EC_F_2M		0x00000002
++#define SC_ALGORITHM_EC_ECPARAMETERS	0x00000004
++#define SC_ALGORITHM_EC_NAMEDCURVE	0x00000008
++#define SC_ALGORITHM_EC_UNCOMPRESS	0x00000010
++#define SC_ALGORITHM_EC_COMPRESS	0x00000020
++
++
++
+ /* Event masks for sc_wait_for_event() */
+ #define SC_EVENT_CARD_INSERTED		0x0001
+ #define SC_EVENT_CARD_REMOVED		0x0002
+@@ -209,6 +218,11 @@
+ 	void *params;
+ };
+ 
++struct sc_ec_params {
++        int len;
++        void *rawparams;
++};
++
+ struct sc_pbkdf2_params {
+ 	u8 salt[16];
+ 	size_t salt_len;
+@@ -1167,6 +1181,7 @@
+ extern sc_card_driver_t *sc_get_starcos_driver(void);
+ extern sc_card_driver_t *sc_get_tcos_driver(void);
+ extern sc_card_driver_t *sc_get_openpgp_driver(void);
++extern sc_card_driver_t *sc_get_oct_driver(void);
+ extern sc_card_driver_t *sc_get_jcop_driver(void);
+ extern sc_card_driver_t *sc_get_oberthur_driver(void);
+ extern sc_card_driver_t *sc_get_belpic_driver(void);
