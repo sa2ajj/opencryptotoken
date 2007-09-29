@@ -5,7 +5,7 @@ EELAYER END
 $Descr A4 11700 8267
 Sheet 1 1
 Title ""
-Date "21 sep 2007"
+Date "28 sep 2007"
 Rev ""
 Comp ""
 Comment1 ""
@@ -14,13 +14,13 @@ Comment3 ""
 Comment4 ""
 $EndDescr
 Wire Wire Line
-	4300 5500 4300 3350
+	4300 5500 4300 4350
 Wire Wire Line
-	4300 3350 4450 3350
+	4300 4350 4450 4350
+Connection ~ 4300 6400
+Connection ~ 4300 6000
 Wire Wire Line
-	4300 6450 4300 6550
-Wire Wire Line
-	4300 5950 4300 5900
+	4300 6400 4300 6550
 Connection ~ 4100 3650
 Wire Wire Line
 	4100 3650 4100 2100
@@ -97,19 +97,19 @@ $EndComp
 $Comp
 L LED D3
 U 1 1 46F44716
-P 4300 5700
-F 0 "D3" H 4300 5800 50  0000 C C
-F 1 "LED" H 4300 5600 50  0000 C C
-	1    4300 5700
+P 4300 6200
+F 0 "D3" H 4300 6300 50  0000 C C
+F 1 "LED" H 4300 6100 50  0000 C C
+	1    4300 6200
 	0    1    1    0   
 $EndComp
 $Comp
 L R R1
 U 1 1 46F446F9
-P 4300 6200
-F 0 "R1" V 4380 6200 50  0000 C C
-F 1 "R" V 4300 6200 50  0000 C C
-	1    4300 6200
+P 4300 5750
+F 0 "R1" V 4380 5750 50  0000 C C
+F 1 "R" V 4300 5750 50  0000 C C
+	1    4300 5750
 	-1   0    0    1   
 $EndComp
 Wire Wire Line
