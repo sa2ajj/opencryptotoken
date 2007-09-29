@@ -1,0 +1,249 @@
+Index: src/ifd/init.c
+===================================================================
+--- src/ifd/init.c	(wersja 1007)
++++ src/ifd/init.c	(kopia robocza)
+@@ -41,6 +41,7 @@
+ 	ifd_starkey_register();
+ 	ifd_towitoko_register();
+ 	/* ifd_wbeiuu_register();	driver not working yet */
++	ifd_oct_register();
+ 	/* ccid last */
+ 	ifd_ccid_register();
+ 
+Index: src/ifd/internal.h
+===================================================================
+--- src/ifd/internal.h	(wersja 1007)
++++ src/ifd/internal.h	(kopia robocza)
+@@ -134,6 +134,7 @@
+ extern void ifd_starkey_register(void);
+ extern void ifd_towitoko_register(void);
+ /* extern void ifd_wbeiuu_register(void); driver not working yet */
++extern void ifd_oct_register(void);
+ 
+ /* reader.c */
+ extern int ifd_send_command(ifd_protocol_t *, const void *, size_t);
+Index: src/ifd/sys-linux.c
+===================================================================
+--- src/ifd/sys-linux.c	(wersja 1007)
++++ src/ifd/sys-linux.c	(kopia robocza)
+@@ -376,6 +376,7 @@
+ 
+ int ifd_sysdep_usb_open(const char *device)
+ {
++	sleep(1);
+         return open(device, O_RDWR);
+ }
+ 
+Index: src/ifd/ifd-oct.c
+===================================================================
+--- src/ifd/ifd-oct.c	(wersja 0)
++++ src/ifd/ifd-oct.c	(wersja 0)
+@@ -0,0 +1,163 @@
++#include "internal.h"
++
++static int oct_open(ifd_reader_t * reader, const char *device_name)
++{ 
++   ifd_device_t *dev;
++   ifd_debug(1, "%s:%d oct_open()", __FILE__, __LINE__);
++
++   reader->name = "OpenCryptoToken driver";
++   reader->nslots = 1;
++   if (!(dev = ifd_device_open(device_name))) {
++        ifd_debug(1,"can't open, hgw why");
++	return -1;
++   }
++
++   if (ifd_device_type(dev) != IFD_DEVICE_TYPE_USB) {
++	ct_error("test driver: device %s is not a USB device", device_name);
++	ifd_device_close(dev);
++	return -1;
++   }
++
++   reader->device = dev;
++   dev->timeout = 1000;
++
++   ifd_debug(1, "%s:%d Checkpoint", __FILE__, __LINE__);
++   return 0;
++
++}
++
++static int oct_activate(ifd_reader_t * reader) { 
++  ifd_debug(1, "%s:%d oct_activate()", __FILE__, __LINE__); 
++  return 0; 
++}
++
++static int oct_deactivate(ifd_reader_t * reader){ 
++  ifd_debug(1, "%s:%d oct_deactivate()", __FILE__, __LINE__); 
++  return -1; 
++}
++
++static char oct_atr[]={0x3b, //Direct Convention
++  0xaf, // y(1) 1010, 15 hist. bytes
++  0x00, //programing param P: 0, I: 0
++  0x40, //Y(i+1)=0100, Protocol T=0
++  0x18, // Work waiting time:960x24x(Fi/F)
++  'O','p','e','n','C','r','y','p','t','o','T','o','k','e','n'};
++
++static int oct_card_reset(ifd_reader_t * reader, int slot, void *atr, 
++                             size_t atr_len)
++{ 
++  ifd_debug(1, "%s:%d oct_card_reset()", __FILE__, __LINE__); 
++  if(atr_len>sizeof(oct_atr)) atr_len=sizeof(oct_atr);
++  memcpy(atr,oct_atr,atr_len);
++  return atr_len;
++}
++
++
++/*
++ * Card status - always present
++ */
++
++static int oct_card_status(ifd_reader_t * reader, int slot, int *status) {
++  *status = IFD_CARD_PRESENT;
++  ifd_debug(1, "%s:%d oct_card_status()", __FILE__, __LINE__); 
++  return 0; 
++}
++
++/*
++ * Send/receive routines
++ */
++
++static int oct_transparent(ifd_reader_t * reader, int dad, const void *inbuffer,
++			  size_t inlen, void *outbuffer, size_t outlen)
++{
++  ifd_iso_apdu_t iso;
++  int p1=0,p2=0;
++  char *buf=0;
++  int buflen=0;
++    
++  int nRecv=0;
++  if(ifd_iso_apdu_parse(inbuffer,inlen,&iso)<0) {
++    ifd_debug(1,"%s:%d apdu_parse():", __FILE__,__LINE__);
++    return -1;
++  }
++/*
++  switch(iso.cse) {
++    case IFD_APDU_CASE_1:
++    case IFD_APDU_CASE_2S:
++    case IFD_APDU_CASE_3S:
++    case IFD_APDU_CASE_4S:
++  }
++*/
++
++  if(iso.ins&0x80) {
++    buf=outbuffer;
++    buflen=iso.le;
++  } else {
++    buf=iso.data+4;
++    buflen=iso.lc;
++  }
++
++  if(iso.lc>=4) {
++    p1=((unsigned short *)iso.data)[0];
++    p2=((unsigned short *)iso.data)[1];
++    if(!(iso.ins&0x80)) {
++      buflen-=4;
++    }
++  }
++
++  if(iso.le && iso.le>(outlen-2)) {
++    ifd_debug(1,"%s:%d out buffer too small:", __FILE__,__LINE__);
++    return -1;
++  }
++
++  ifd_debug(1,"ifd_usb_control");
++  if((nRecv=ifd_usb_control(reader->device,0x40|(iso.ins&0x80),iso.ins,p1,p2,buf,buflen,5000))<0) {
++    ifd_debug(1,"%s:%d usb_control():", __FILE__,__LINE__);
++    return -1;
++  }
++ 
++//  assert(nRecv==iso.le)
++
++  ((char *)outbuffer)[nRecv]=0x90;
++  ((char *)outbuffer)[nRecv+1]=0x0;
++  return nRecv+2;
++}
++
++
++static int oct_set_protocol(ifd_reader_t * reader, int s, int proto)
++{
++	ifd_slot_t *slot;
++	ifd_protocol_t *p;
++
++	ifd_debug(1, "proto=%d", proto);
++	if (proto != IFD_PROTOCOL_T0 && proto != IFD_PROTOCOL_TRANSPARENT) {
++		ct_error("%s: protocol %d not supported", reader->name, proto);
++		return IFD_ERROR_NOT_SUPPORTED;
++	}
++	slot = &reader->slot[s];
++	p = ifd_protocol_new(IFD_PROTOCOL_TRANSPARENT, reader, slot->dad);
++	if (!p) {
++		ct_error("%s: internal error", reader->name);
++		return IFD_ERROR_GENERIC;
++	}
++	if (slot->proto) {
++		ifd_protocol_free(slot->proto);
++		slot->proto = 0;
++	}
++	slot->proto = p;
++	return 0;
++}
++
++static struct ifd_driver_ops oct_driver;
++
++void ifd_oct_register(void)
++{
++        oct_driver.open = oct_open;
++        oct_driver.activate = oct_activate;
++        oct_driver.deactivate = oct_deactivate;
++        oct_driver.card_reset = oct_card_reset;
++        oct_driver.card_status = oct_card_status;
++        oct_driver.transparent=oct_transparent;
++        oct_driver.set_protocol=oct_set_protocol;
++        ifd_driver_register("oct", &oct_driver);
++}
+Index: src/ifd/Makefile.am
+===================================================================
+--- src/ifd/Makefile.am	(wersja 1007)
++++ src/ifd/Makefile.am	(kopia robocza)
+@@ -17,6 +17,7 @@
+ 	ifd-etoken.c ifd-etoken64.c ifd-eutron.c ifd-gempc.c ifd-ikey2k.c \
+ 	ifd-ikey3k.c ifd-kaan.c ifd-pertosmart1030.c ifd-pertosmart1038.c \
+ 	ifd-smartboard.c ifd-smph.c ifd-starkey.c ifd-towitoko.c cardman.h \
++	ifd-wbeiuu.c ifd-oct.c \
+ 	\
+ 	proto-gbp.c proto-sync.c proto-t0.c proto-t1.c \
+ 	proto-trans.c proto-escape.c \
+Index: etc/openct.conf.in
+===================================================================
+--- etc/openct.conf.in	(wersja 1007)
++++ etc/openct.conf.in	(kopia robocza)
+@@ -121,6 +121,11 @@
+ 		usb:072f/8009,
+ 	};
+ };
++driver oct {
++	ids = {
++		usb:16c0/05dc,
++	};
++};
+ driver pertosmart1038 {
+ 	ids = {
+ 		usb:072f/9000,
+Index: etc/openct.fdi
+===================================================================
+--- etc/openct.fdi	(wersja 1007)
++++ etc/openct.fdi	(kopia robocza)
+@@ -108,6 +108,12 @@
+ 	</match>
+       </match>
+ 
++      <match key="usb.vendor_id" int="0x16c0">
++	<match key="usb.product_id" int="0x05dc">
++	  <merge key="info.category" type="string">smart_card_reader</merge>
++	  <append key="info.addons" type="strlist">hald-addon-openct</append>
++	</match>
++      </match>
+     </match>
+   </device>
+ </deviceinfo>
